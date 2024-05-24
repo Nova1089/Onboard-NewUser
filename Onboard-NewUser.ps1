@@ -107,23 +107,10 @@ function Get-M365User($upn)
     return (Get-MgUser -UserID $upn -Property @("CreatedDateTime", "DisplayName", "UserPrincipalName", "JobTitle", "Department", "UsageLocation", "LicenseDetails") -ErrorAction "SilentlyContinue")
 }
 
-function Display-BasicUserProperties($user)
+function Get-UserManager($upn)
 {
-    Write-Host "User found!" -ForegroundColor $successColor
-    $managerId = Get-MgUserManager -UserId $user.UserPrincipalName | Select-Object -ExpandProperty "ID"
-    $managerDisplayName = Get-MgUser -UserId $managerId | Select-Object -ExpandProperty "DisplayName"
-    $licenses = Get-UserLicenses $user.UserPrincipalName
-    $userProps = [PSCustomObject]@{
-        "Created Date/Time" = $user.CreatedDateTime
-        "Display Name" = $user.DisplayName
-        "UPN" = $user.UserPrincipalName
-        "Title" = $user.JobTitle
-        "Department" = $user.Department
-        "Manager"      = $managerDisplayName
-        "Usage Location" = $user.UsageLocation
-        "Licenses" = $licenses
-    }
-    $userProps | Out-Host
+    $managerId = Get-MgUserManager -UserId $upn | Select-Object -ExpandProperty "ID"
+    return Get-MgUser -UserId $managerId | Select-Object -ExpandProperty "DisplayName"
 }
 
 function Get-UserLicenses($upn)
@@ -161,6 +148,72 @@ function Get-UserLicenses($upn)
     return $licenses
 }
 
+function Get-UserGroups($upn)
+{
+    return Get-MgUserMemberOfAsGroup -UserId $upn | Select-Object -ExpandProperty "DisplayName"
+}
+
+function Get-UserAdminRoles($upn)
+{
+    return Get-MgUserMemberOfAsDirectoryRole -UserId $upn | Select-Object -ExpandProperty "DisplayName"
+}
+
+function Display-UserProperties($user, $manager, $licenses, $groups, $adminRoles)
+{
+    Write-Host "User found!" -ForegroundColor $successColor
+
+    $basicProps = [PSCustomObject]@{
+        "Created Date/Time" = $user.CreatedDateTime
+        "Display Name"      = $user.DisplayName
+        "UPN"               = $user.UserPrincipalName
+        "Title"             = $user.JobTitle
+        "Department"        = $user.Department
+        "Manager"           = $manager
+        "Usage Location"    = $user.UsageLocation
+    }
+    $basicProps | Out-Host
+
+    Show-Separator "Licenses"
+    $licenses | Out-Host
+
+    Show-Separator "Groups"
+    $groups | Out-Host
+    
+    Show-Separator "Admin Roles"
+    $adminRoles | Out-Host
+    
+    Write-Host "`n"
+}
+
+function Show-Separator($title, [ConsoleColor]$color = "DarkCyan", [switch]$noLineBreaks)
+{
+    if ($title)
+    {
+        $separator = " $title "
+    }
+    else
+    {
+        $separator = ""
+    }
+
+    # Truncate if it's too long.
+    If (($separator.length - 6) -gt ((Get-host).UI.RawUI.BufferSize.Width))
+    {
+        $separator = $separator.Remove((Get-host).UI.RawUI.BufferSize.Width - 5)
+    }
+
+    # Pad with dashes.
+    $separator = "--$($separator.PadRight(((Get-host).UI.RawUI.BufferSize.Width)-3,"-"))"
+
+    if (-not($noLineBreaks))
+    {        
+        # Add line breaks.
+        $separator = "`n$separator`n"
+    }
+
+    Write-Host $separator -ForegroundColor $color
+}
+
 # main
 Initialize-ColorScheme
 Show-Introduction
@@ -170,5 +223,9 @@ $upn = Read-Host "Please enter the UPN for the new user (PreferredFirstName.Last
 $user = Get-M365User $upn
 if ($null -ne $user)
 {
-    Display-BasicUserProperties $user
+    $manager = Get-UserManager $upn
+    $licenses = Get-UserLicenses $upn
+    $groups = Get-UserGroups $upn
+    $adminRoles = Get-UserAdminRoles $upn
+    Display-UserProperties -User $user -Manager $manager -Licenses $licenses -Groups $groups -AdminRoles $adminRoles
 }
