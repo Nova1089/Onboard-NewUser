@@ -102,18 +102,52 @@ function Test-ConnectedToMgGraph
     return $null -ne (Get-MgContext)
 }
 
-function Get-M365User($upn)
+function Prompt-UPN
 {
-    return (Get-MgUser -UserID $upn -Property @("CreatedDateTime", "DisplayName", "UserPrincipalName", "JobTitle", "Department", "UsageLocation", "LicenseDetails") -ErrorAction "SilentlyContinue")
+    $upn = Read-Host "Enter the UPN for the user (PreferredFirstName.LastName@blueravensolar.com)"
+    $isValidEmail = Validate-BrsEmail $upn
+    while (-not($isValidEmail))
+    {
+        $upn = Read-Host "Enter the UPN for the user"
+        $isValidEmail = Validate-BrsEmail $upn
+    }
+
+    return $upn.Trim()
 }
 
-function Get-UserManager($upn)
+function Validate-BrsEmail($email)
 {
-    $managerId = Get-MgUserManager -UserId $upn | Select-Object -ExpandProperty "ID"
+    $isValidEmail = $email -imatch '^\s*[\w\.-]+\.[\w\.-]+(@blueravensolar\.com)\s*$'
+    
+    if (-not($isValidEmail))
+    {
+        Write-Warning ("Email is invalid: $email `n" +
+            "    Expected format is PreferredFirstName.LastName@blueravensolar.com `n")
+    }
+
+    return $isValidEmail
+}
+
+function Get-M365User($upn)
+{
+    if ($null -eq $upn) { throw "UPN is null" }
+    
+    $user = (Get-MgUser -UserID $upn -Property @("CreatedDateTime", "DisplayName", "UserPrincipalName", "JobTitle", "Department", "UsageLocation", "LicenseDetails") -ErrorAction "SilentlyContinue")
+    if ($null -eq $user)
+    {
+        Write-Host "User does not exist yet." -ForegroundColor $infoColor
+    }
+    return $user
+}
+
+function Get-UserManager($user)
+{
+    $managerId = Get-MgUserManager -UserId $user.UserPrincipalName -ErrorAction "SilentlyContinue" | Select-Object -ExpandProperty "ID"
+    if ($null -eq $managerId) { return $null }
     return Get-MgUser -UserId $managerId | Select-Object -ExpandProperty "DisplayName"
 }
 
-function Get-UserLicenses($upn)
+function Get-UserLicenses($user)
 {
     if ($null -eq $script:lookupTable)
     {
@@ -136,7 +170,7 @@ function Get-UserLicenses($upn)
         }
     }
 
-    $licenseDetails = Get-MGUserLicenseDetail -UserId $upn
+    $licenseDetails = Get-MGUserLicenseDetail -UserId $user.UserPrincipalName
     $licenses = New-Object System.Collections.Generic.List[String]
 
     foreach ($license in $licenseDetails)
@@ -145,17 +179,17 @@ function Get-UserLicenses($upn)
         $licenses.Add($licenseName)
     }
 
-    return $licenses
+    return Write-Output $licenses -NoEnumerate
 }
 
-function Get-UserGroups($upn)
+function Get-UserGroups($user)
 {
-    return Get-MgUserMemberOfAsGroup -UserId $upn | Select-Object -ExpandProperty "DisplayName"
+    return Get-MgUserMemberOfAsGroup -UserId $user.UserPrincipalName | Select-Object -ExpandProperty "DisplayName"
 }
 
-function Get-UserAdminRoles($upn)
+function Get-UserAdminRoles($user)
 {
-    return Get-MgUserMemberOfAsDirectoryRole -UserId $upn | Select-Object -ExpandProperty "DisplayName"
+    return Get-MgUserMemberOfAsDirectoryRole -UserId $user.UserPrincipalName | Select-Object -ExpandProperty "DisplayName"
 }
 
 function Display-UserProperties($user, $manager, $licenses, $groups, $adminRoles)
@@ -219,13 +253,15 @@ Initialize-ColorScheme
 Show-Introduction
 Use-Module -ModuleName "Microsoft.Graph.Users"
 TryConnect-MgGraph -Scopes User.ReadWrite.All
-$upn = Read-Host "Please enter the UPN for the new user (PreferredFirstName.LastName@blueravensolar.com)"
+$upn = Prompt-UPN
 $user = Get-M365User $upn
 if ($null -ne $user)
 {
-    $manager = Get-UserManager $upn
-    $licenses = Get-UserLicenses $upn
-    $groups = Get-UserGroups $upn
-    $adminRoles = Get-UserAdminRoles $upn
+    $manager = Get-UserManager $user 
+    $licenses = Get-UserLicenses $user 
+    $groups = Get-UserGroups $user
+    $adminRoles = Get-UserAdminRoles $user
     Display-UserProperties -User $user -Manager $manager -Licenses $licenses -Groups $groups -AdminRoles $adminRoles
 }
+
+Read-Host "Press Enter to exit"
