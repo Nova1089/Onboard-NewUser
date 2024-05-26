@@ -1,7 +1,7 @@
 <#
 Version 1.0
 
-Script synopsis...
+This script sets up a new user in M365.
 #>
 
 # functions
@@ -15,7 +15,7 @@ function Initialize-ColorScheme
 
 function Show-Introduction
 {
-    Write-Host "This script does some stuff..." -ForegroundColor $infoColor
+    Write-Host "This script sets up a new user in M365." -ForegroundColor $infoColor
     Read-Host "Press Enter to continue"
 }
 
@@ -132,7 +132,14 @@ function Get-M365User($upn)
 {
     if ($null -eq $upn) { throw "UPN is null" }
     
-    $user = (Get-MgUser -UserID $upn -Property @("CreatedDateTime", "DisplayName", "UserPrincipalName", "JobTitle", "Department", "UsageLocation", "LicenseDetails") -ErrorAction "SilentlyContinue")
+    $user = (Get-MgUser -UserID $upn -Property @("CreatedDateTime", 
+                                                "DisplayName", 
+                                                "UserPrincipalName",   
+                                                "JobTitle", 
+                                                "Department", 
+                                                "UsageLocation", 
+                                                "LicenseDetails",
+                                                "Id") -ErrorAction "SilentlyContinue")
     if ($null -eq $user)
     {
         Write-Host "User does not exist yet." -ForegroundColor $infoColor
@@ -248,11 +255,79 @@ function Show-Separator($title, [ConsoleColor]$color = "DarkCyan", [switch]$noLi
     Write-Host $separator -ForegroundColor $color
 }
 
+function Prompt-Menu 
+{
+    if ($licenseStepCompleted) { $licenseBox = "[X]"} else { $licenseBox = "[ ]" }
+    if ($groupStepCompleted) { $groupBox = "[X]" } else { $groupBox = "[ ]" }
+    if ($mailboxStepCompleted) { $mailboxBox = "[X]" } else { $mailboxBox = "[ ]" }
+
+    Read-Host ("What would you like to do next?`n`n" +
+                "[1] Display User Info`n" +
+                "[2] $licenseBox Grant licenses`n" +
+                "[3] $groupBox Assign groups`n" +
+                "[4] $mailboxBox Grant shared mailboxes`n" +
+                "[5] Finish`n")
+}
+
+function Prompt-GroupEmail
+{
+    do
+    {
+        $groupEmail = Read-Host "Enter group email address (you may omit the @blueravensolar.com)"
+    }
+    while ($null -eq $groupEmail)
+
+    $groupEmail = $groupEmail.Trim()
+    $isStandardFormat = $groupEmail -imatch '^\S+@blueravensolar.com$'
+
+    if (-not($isStandardFormat))
+    {
+        $groupEmail += '@blueravensolar.com'
+    }
+
+    return $groupEmail
+}
+
+function Get-M365Group($email)
+{
+    $group = Get-MgGroup -Filter "mail eq '$email'" -ErrorAction "SilentlyContinue"
+    if ($group)
+    {
+        Write-Host "Found Group!" -ForegroundColor $successColor
+        $group | Select-Object -Property @("DisplayName", "Mail", "Description") | Out-Host        
+    }
+    else
+    {
+        Write-Host "Group not found." -ForegroundColor $warningColor
+    }
+    return $group
+}
+
+function Assign-M365Group($user, $group, $existingGroups)
+{
+    if ($existingGroups -contains $group.DisplayName)
+    {
+        Write-Host "$($user.DisplayName) is already a member of that group." -ForegroundColor $warningColor
+        return
+    }
+    
+    try
+    {
+        New-MgGroupMember -GroupId $group.Id -DirectoryObjectId $user.Id -ErrorAction "Stop" | Out-Null
+    }
+    catch
+    {
+        $errorRecord = $_
+        Write-Host "There was an issue assigning the group." -ForegroundColor $failColor
+        Write-Host $errorRecord.Exception.Message -ForegroundColor $failColor
+    }    
+}
+
 # main
 Initialize-ColorScheme
 Show-Introduction
 Use-Module -ModuleName "Microsoft.Graph.Users"
-TryConnect-MgGraph -Scopes User.ReadWrite.All
+TryConnect-MgGraph -Scopes @("User.ReadWrite.All", "Group.ReadWrite.All")
 $upn = Prompt-UPN
 $user = Get-M365User $upn
 if ($null -ne $user)
@@ -263,5 +338,53 @@ if ($null -ne $user)
     $adminRoles = Get-UserAdminRoles $user
     Display-UserProperties -User $user -Manager $manager -Licenses $licenses -Groups $groups -AdminRoles $adminRoles
 }
+
+$script:licenseStepCompleted = $false
+$script:groupStepCompleted = $false
+$script:mailboxStepCompleted = $false
+
+$menuSelection = Prompt-Menu
+
+switch ($menuSelection)
+{
+    1
+    {
+        if ($null -ne $user)
+        {
+            $manager = Get-UserManager $user 
+            $licenses = Get-UserLicenses $user 
+            $groups = Get-UserGroups $user
+            $adminRoles = Get-UserAdminRoles $user
+            Display-UserProperties -User $user -Manager $manager -Licenses $licenses -Groups $groups -AdminRoles $adminRoles
+        }
+    }
+    2
+    {
+        Write-Host "You selected option 2! (Grant licenses)" -ForegroundColor $infoColor
+        $script:licenseStepCompleted = $true
+    }
+    3
+    {
+        Write-Host "You selected option 3! (Assign groups)" -ForegroundColor $infoColor
+        $script:groupStepCompleted = $true
+        do
+        {
+            $groupEmail = Prompt-GroupEmail
+            $group = Get-M365Group $groupEmail
+        }
+        while ($null -eq $group)
+    }
+    4
+    {
+        Write-Host "You selected option 4! (Grant shared mailboxes)" -ForegroundColor $infoColor
+        $script:mailboxStepCompleted = $true
+    }
+    5
+    {
+        Write-Host "You selected option 5!" -ForegroundColor $infoColor
+    }
+}
+
+$menuSelection = Prompt-Menu
 
 Read-Host "Press Enter to exit"
