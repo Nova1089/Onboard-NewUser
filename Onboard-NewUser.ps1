@@ -102,6 +102,23 @@ function Test-ConnectedToMgGraph
     return $null -ne (Get-MgContext)
 }
 
+function TryConnect-ExchangeOnline
+{
+    $connectionStatus = Get-ConnectionInformation -ErrorAction SilentlyContinue
+
+    while ($null -eq $connectionStatus)
+    {
+        Write-Host "Connecting to Exchange Online..."
+        Connect-ExchangeOnline -ErrorAction SilentlyContinue
+        $connectionStatus = Get-ConnectionInformation
+
+        if ($null -eq $connectionStatus)
+        {
+            Read-Host -Prompt "Failed to connect to Exchange Online. Press Enter to try again"
+        }
+    }
+}
+
 function Prompt-UPN
 {
     $upn = Read-Host "Enter the UPN for the user (PreferredFirstName.LastName@blueravensolar.com)"
@@ -130,7 +147,7 @@ function Validate-BrsEmail($email)
 
 function Get-M365User($upn)
 {
-    if ($null -eq $upn) { throw "UPN is null" }
+    if ($null -eq $upn) { throw "Can't get M365 user. UPN is null." }
     
     $user = (Get-MgUser -UserID $upn -Property @("CreatedDateTime", 
                                                 "DisplayName", 
@@ -269,23 +286,29 @@ function Prompt-Menu
                 "[5] Finish`n")
 }
 
-function Prompt-GroupEmail
+function Prompt-BrsEmail
 {
+    param
+    (
+        [ValidateSet("group", "mailbox", IgnoreCase = $false)]
+        $emailType
+    )
+
     do
     {
-        $groupEmail = Read-Host "Enter group email address (you may omit the @blueravensolar.com)"
+        $email = Read-Host "Enter $emailType email (you may omit the @blueravensolar.com)"
     }
-    while ($null -eq $groupEmail)
+    while ($null -eq $email)
 
-    $groupEmail = $groupEmail.Trim()
-    $isStandardFormat = $groupEmail -imatch '^\S+@blueravensolar.com$'
+    $email = $email.Trim()
+    $isStandardFormat = $email -imatch '^\S+@blueravensolar.com$'
 
     if (-not($isStandardFormat))
     {
-        $groupEmail += '@blueravensolar.com'
+        $email += '@blueravensolar.com'
     }
 
-    return $groupEmail
+    return $email
 }
 
 function Get-M365Group($email)
@@ -323,11 +346,89 @@ function Assign-M365Group($user, $group, $existingGroups)
     }    
 }
 
+function Get-SharedMailbox($email)
+{
+    if ($null -eq $email) { throw "Can't get shared mailbox. Email is null." }
+
+    $mailbox = Get-EXOMailbox -Identity $email -ErrorAction "SilentlyContinue"
+    if (($mailbox) -and ($mailbox.RecipientTypeDetails -eq 'SharedMailbox'))
+    {
+        Write-Host "Mailbox found!" -ForegroundColor $successColor
+        $mailbox | Select-Object -Property @("DisplayName", "UserPrincipalName", @{ label = "Type"; expression = {$_.RecipientTypeDetails} }) | Out-Host
+        return $mailbox
+    }
+    elseif ($mailbox)
+    {
+        Write-Host "Mailbox was found but it's not a shared mailbox. Type is '$($mailbox.RecipientTypeDetails)'." -ForegroundColor $warningColor
+    }
+    else
+    {
+        Write-Host "Mailbox not found." -ForegroundColor $warningColor
+    }
+    return $null
+}
+
+function Grant-MailboxAccess($user, $mailbox)
+{
+   $accessType = Prompt-MailboxAccessType
+
+   try
+   {
+        switch ($accessType)
+        {
+            1
+            {
+                Add-MailboxPermission -Identity $mailbox.PrimarySmtpAddress -User $user.UserPrincipalName -AccessRights "FullAccess" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop" | Out-Null
+            }
+            2
+            {
+                Add-RecipientPermission -Identity $mailbox.PrimarySmtpAddress -Trustee $user.UserPrincipalName -AccessRights "SendAs" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop" | Out-Null
+            }
+            3
+            {
+                Add-MailboxPermission -Identity $mailbox.PrimarySmtpAddress -User $user.UserPrincipalName -AccessRights "FullAccess" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop" | Out-Null
+                Add-RecipientPermission -Identity $mailbox.PrimarySmtpAddress -Trustee $user.UserPrincipalName -AccessRights "SendAs" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop" | Out-Null
+            }
+        }
+        Write-Host "Successfully granted access! (If they didn't already have the access.)" -ForegroundColor $successColor
+   }
+   catch
+   {
+        $errorRecord = $_
+        Write-Host "There was an issue granting mailbox access. Please try again." -ForegroundColor $failColor
+        Write-Host $errorRecord.Exception.Message -ForegroundColor $failColor
+   }    
+}
+
+function Prompt-MailboxAccessType
+{
+    do
+    {
+        $accessType = Read-Host  ("Access type?`n`n" +
+            "[1] Read & Manage`n" +
+            "[2] Send As`n" +
+            "[3] Both`n")
+
+        $accessType = $accessType.Trim()
+        $isValidResponse = $accessType -imatch '^\s*[123]\s*$' # regex matches 1, 2, or 3 but allows spaces.
+
+        if (-not($isValidResponse))
+        {
+            Write-Host "Please enter a number 1-3." -ForegroundColor $warningColor
+        }
+    }
+    while (-not($isValidResponse))
+
+    return $accessType
+}
+
 # main
 Initialize-ColorScheme
 Show-Introduction
-Use-Module -ModuleName "Microsoft.Graph.Users"
+Use-Module "Microsoft.Graph.Users"
+Use-Module "ExchangeOnlineManagement"
 TryConnect-MgGraph -Scopes @("User.ReadWrite.All", "Group.ReadWrite.All")
+TryConnect-ExchangeOnline
 $upn = Prompt-UPN
 $user = Get-M365User $upn
 if ($null -ne $user)
@@ -369,15 +470,25 @@ switch ($menuSelection)
         $script:groupStepCompleted = $true
         do
         {
-            $groupEmail = Prompt-GroupEmail
+            $groupEmail = Prompt-BRSEmail -EmailType "group"
             $group = Get-M365Group $groupEmail
         }
         while ($null -eq $group)
+
+        Assign-M365Group -User $user -Group $group -ExistingGroups $groups
     }
     4
     {
         Write-Host "You selected option 4! (Grant shared mailboxes)" -ForegroundColor $infoColor
         $script:mailboxStepCompleted = $true
+        do
+        {
+            $mailboxEmail = Prompt-BrsEmail -EmailType "mailbox"
+            $mailbox = Get-SharedMailbox $mailboxEmail
+        }
+        while ($null -eq $mailbox)
+
+        Grant-MailboxAccess -User $user -Mailbox $mailbox
     }
     5
     {
