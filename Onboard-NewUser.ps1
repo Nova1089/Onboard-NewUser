@@ -422,11 +422,31 @@ function Prompt-MailboxAccessType
     return $accessType
 }
 
+function Get-GoToAccessToken($clientId, $clientSecret)
+{
+    # Function handles GoTo connect OAUTH2 authorization code grant flow. (Obtains auth code then uses that to get a temp access token.)
+    # https://developer.goto.com/guides/Authentication/03_HOW_accessToken/
+    # https://developer.goto.com/Authentication/#section/Authorization-Flows
+
+    $authUri = "https://authentication.logmeininc.com/oauth/authorize"
+    $accessTokenUri = "https://authentication.logmeininc.com/oauth/token"
+    $redirectUri = "https://localhost"
+    
+    if ($null -eq $clientId) { $clientId = Read-Host "Enter client ID" }
+    if ($null -eq $clientSecret) { $clientSecret = Read-Host "Enter client secret" }
+
+    $authCode = Invoke-OAuth2AuthorizationEndpoint -Uri $authUri -Client_id $clientId -Redirect_uri $redirectUri
+    $accessToken = $accessToken = Invoke-OAuth2TokenEndpoint @authCode -Uri $accessTokenUri -Client_secret $clientSecret -Client_auth_method "client_secret_basic"
+
+    return $accessToken
+}
+
 # main
 Initialize-ColorScheme
 Show-Introduction
 Use-Module "Microsoft.Graph.Users"
 Use-Module "ExchangeOnlineManagement"
+Use-Module "PSAuthClient" # Docs for this module found here https://github.com/alflokken/PSAuthClient
 TryConnect-MgGraph -Scopes @("User.ReadWrite.All", "Group.ReadWrite.All")
 TryConnect-ExchangeOnline
 $upn = Prompt-UPN
