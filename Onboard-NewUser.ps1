@@ -277,13 +277,15 @@ function Prompt-Menu
     if ($licenseStepCompleted) { $licenseBox = "[X]"} else { $licenseBox = "[ ]" }
     if ($groupStepCompleted) { $groupBox = "[X]" } else { $groupBox = "[ ]" }
     if ($mailboxStepCompleted) { $mailboxBox = "[X]" } else { $mailboxBox = "[ ]" }
+    if ($gotoStepCompleted) { $gotoBox = "[X]" } else { $gotoBox = "[ ]"}
 
     Read-Host ("What would you like to do next?`n`n" +
                 "[1] Display User Info`n" +
                 "[2] $licenseBox Grant licenses`n" +
                 "[3] $groupBox Assign groups`n" +
                 "[4] $mailboxBox Grant shared mailboxes`n" +
-                "[5] Finish`n")
+                "[5] $gotoBox Setup GoTo Account`n" +
+                "[6] Finish`n")
 }
 
 function Prompt-BrsEmail
@@ -422,7 +424,12 @@ function Prompt-MailboxAccessType
     return $accessType
 }
 
-function Get-GoToAccessToken($clientId, $clientSecret)
+function Get-GotoApiSecret
+{
+    return Get-Secret -Name "YZJrirO-73fEk6aZO5QgZg" -AsPlainText
+}
+
+function Get-GotoAccessToken($clientId, $clientSecret)
 {
     # Function handles GoTo connect OAUTH2 authorization code grant flow. (Obtains auth code then uses that to get a temp access token.)
     # https://developer.goto.com/guides/Authentication/03_HOW_accessToken/
@@ -441,11 +448,53 @@ function Get-GoToAccessToken($clientId, $clientSecret)
     return $accessToken
 }
 
+function Get-GotoUser($accessToken, $accountKey, $email)
+{
+    $method = "Get"
+    # https://developer.goto.com/admin/#operation/Get%20Users
+    $uri = "https://api.getgo.com/admin/rest/v1/accounts/$accountKey/users"
+    $headers = @{
+        "Authorization" = "Bearer $accessToken"
+    }
+    # eq is the "equals" operator. https://developer.goto.com/admin/#section/Resource-Filtering 
+    $emailQuery = "email eq `"$email`""
+
+    # Here we apply the query params directly to the URI instead of passing them to the body param of Invoke-RestMethod.
+    # That other way will apply URL encoding to the query params, but encode spaces with + signs instead of %20. 
+    # The GoTo API doesn't accept this.
+    $encodedEmailQuery = URLEncode-QueryParam $emailQuery
+    $uri = $uri + "?filter=$encodedEmailQuery"
+
+    $response = SafelyInvoke-RestMethod -Method $method -Uri $uri -Headers $headers
+    return $response.results
+}
+
+function URLEncode-QueryParam($queryParam)
+{ 
+    return [uri]::EscapeDataString($queryParam)
+}
+
+function SafelyInvoke-RestMethod($method, $uri, $headers, $body)
+{
+    try
+    {
+        $response = Invoke-RestMethod -Method $method -Uri $uri -Headers $headers -Body $body -ErrorVariable "responseError"
+    }
+    catch
+    {
+        Write-Host $responseError[0].Message -ForegroundColor $warningColor
+        return $null
+    }
+
+    return $response
+}
+
 # main
 Initialize-ColorScheme
 Show-Introduction
 Use-Module "Microsoft.Graph.Users"
 Use-Module "ExchangeOnlineManagement"
+Use-Module "Microsoft.Powershell.SecretManagement"
 Use-Module "PSAuthClient" # Docs for this module found here https://github.com/alflokken/PSAuthClient
 TryConnect-MgGraph -Scopes @("User.ReadWrite.All", "Group.ReadWrite.All")
 TryConnect-ExchangeOnline
@@ -463,6 +512,7 @@ if ($null -ne $user)
 $script:licenseStepCompleted = $false
 $script:groupStepCompleted = $false
 $script:mailboxStepCompleted = $false
+$script:gotoStepCompleted = $false
 
 $menuSelection = Prompt-Menu
 
@@ -512,7 +562,24 @@ switch ($menuSelection)
     }
     5
     {
-        Write-Host "You selected option 5!" -ForegroundColor $infoColor
+        Write-Host "You selected option 5! (Setup GoTo account)" -ForegroundColor $infoColor
+        $script:gotoStepCompleted = $true
+        $gotoSecret = Get-GotoApiSecret
+        $accessToken = Get-GotoAccessToken -ClientId $gotoSecret.ClientID -ClientSecret $gotoSecret.ClientSecret
+        $gotoUser = Get-GotoUser -AccessToken $accessToken -AccountKey $gotoSecret.AccountKey -Email $upn
+        if ($gotoUser)
+        {
+            Write-Host "Found goto user!" -ForegroundColor $successColor
+            $gotoUser | Out-Host
+        }
+        else
+        {
+            Write-Host "Could not find goto user :(" -ForegroundColor $warningColor
+        }
+    }
+    6
+    {
+        Write-Host "You selected option 6! (Finish)" -ForegroundColor $infoColor
     }
 }
 
