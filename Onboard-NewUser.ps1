@@ -445,7 +445,7 @@ function Get-GotoAccessToken($clientId, $clientSecret)
     $authCode = Invoke-OAuth2AuthorizationEndpoint -Uri $authUri -Client_id $clientId -Redirect_uri $redirectUri
     $accessToken = $accessToken = Invoke-OAuth2TokenEndpoint @authCode -Uri $accessTokenUri -Client_secret $clientSecret -Client_auth_method "client_secret_basic"
 
-    return $accessToken
+    return $accessToken.access_token
 }
 
 function Get-GotoUser($accessToken, $accountKey, $email)
