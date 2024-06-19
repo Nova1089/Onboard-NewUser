@@ -1,6 +1,9 @@
 # Import modules in the same folder. These imports must come first in the script.
 using module .\GlobalFunctions.psm1
 
+# Initialize script scoped variables
+Initialize-ColorScheme
+
 class GotoWizard
 {
     # properties
@@ -52,11 +55,11 @@ class GotoWizard
                 }
                 3 # assign outbound caller ID
                 {
-
+                    $this.DisplayLinkToOutboundCallerId()
                 }
                 4 # finish
                 {
-
+                    # break out of the goto wizard
                 }
             }
         }
@@ -109,7 +112,7 @@ class GotoWizard
 
     ShowUserInfo()
     {
-        $role = GetUserRole
+        $role = $this.GetUserRole()
         # I'd also show their external caller ID, but this is not accessible from the public API.
         $this.user | Add-Member -NotePropertyName "role" -NotePropertyValue $role -PassThru | Format-List -Property @("email", "firstName", "lastName", "role") | Out-Host
     }
@@ -242,7 +245,7 @@ class GotoWizard
                     $uri = $uri + "?filter=$emailQuery"
                 }
             }
-            {$_ -ge 4} # roleSelection is >= 4 and is therefore a custom role
+            {$_ -ge 4} # roleSelection is >= 4 and therefore a custom role
             {
                 $roleId = @($this.allCustomRoles.keys)[$roleSelection - 4] # enumerates the keys and accesses them by index
                 $uri = "https://api.getgo.com/admin/rest/v1/accounts/$($this.accountKey)/rolesets/$roleId/users"
@@ -252,6 +255,25 @@ class GotoWizard
             }
         }
 
-        SafelyInvoke-RestMethod -Method $method -Uri $uri -Headers $headers -Body $body
+        SafelyInvoke-RestMethod -Method $method -Uri $uri -Headers $headers -Body ($body | ConvertTo-Json)
+    }
+
+    DisplayLinkToOutboundCallerId()
+    {
+        $line = $this.GetLine()
+        Write-Host "At this time the GoTo API can't change the outbound caller ID. You'll need to change it here:" -ForegroundColor "DarkCyan"
+        Write-Host "https://my.jive.com/pbx/brs/extensions/lines/$($line.id)/general?source=root.nav.pbx.extensions.lines.list" -ForegroundColor "DarkCyan"
+    }
+
+    [object] GetLine()
+    {
+        $method = "Get"
+        $uri = "https://api.goto.com/users/v1/users/$($this.user.key)/lines"
+        $headers = @{
+            "Authorization" = "Bearer $($this.accessToken)"
+        }
+
+        $response = SafelyInvoke-RestMethod -Method $method -Uri $uri -Headers $headers
+        return $response.items
     }
 }
