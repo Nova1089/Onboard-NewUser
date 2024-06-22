@@ -4,15 +4,16 @@ Version 1.0
 This script onboards a new user into M365 and GoTo.
 #>
 
-# Import modules in the same folder. These imports must come first in the script.
-using module .\GlobalFunctions.psm1
+# Import class modules in the same folder. These imports must come first in the script.
 using module .\Class-GotoWizard.psm1
+
+# Dot sourcing
+. "$PSScriptRoot\GlobalFunctions.ps1"
 
 #This directive will throw an error if not running PowerShell core (a.k.a PowerShell v6+)
 #Requires -PSEdition Core
 
 # main
-Initialize-ColorScheme
 Show-Introduction
 Use-Module "Microsoft.Graph.Users"
 Use-Module "ExchangeOnlineManagement"
@@ -54,6 +55,7 @@ switch ($mainMenuSelection)
     2
     {
         Write-Host "You selected option 2! (Grant licenses)" -ForegroundColor $infoColor
+        Start-M365LicenseWizard $user
         $script:licenseStepCompleted = $true
     }
     3
@@ -86,7 +88,7 @@ switch ($mainMenuSelection)
     {
         Write-Host "You selected option 5! (Setup GoTo account)" -ForegroundColor $infoColor
         $script:gotoStepCompleted = $true
-        $gotoWizard = New-Object GotoWizard -ArgumentList $upn
+        $gotoWizard = [GotoWizard]::New($upn)
         $gotoWizard.Start()
     }
     6

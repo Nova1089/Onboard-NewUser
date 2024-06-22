@@ -1,8 +1,5 @@
-# Import modules in the same folder. These imports must come first in the script.
-using module .\GlobalFunctions.psm1
-
-# Initialize script scoped variables
-Initialize-ColorScheme
+# Dot sourcing
+. "$PSScriptRoot\GlobalFunctions.ps1"
 
 class GotoWizard
 {
@@ -22,7 +19,7 @@ class GotoWizard
     GotoWizard($upn)
     {
         $this.upn = $upn
-        $this.gotoSecret = GetApiSecret
+        $this.gotoSecret = GetApiSecret()
         $this.clientId = $this.gotoSecret.ClientId
         $this.clientSecret = $this.gotoSecret.ClientSecret
         $this.accountKey = $this.gotoSecret.AccountKey
