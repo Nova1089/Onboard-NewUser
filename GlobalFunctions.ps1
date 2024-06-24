@@ -115,7 +115,7 @@ function TryConnect-ExchangeOnline
 
 function Prompt-UPN
 {
-    $upn = Read-Host "Enter the UPN for the user (PreferredFirstName.LastName@blueravensolar.com)"
+    $upn = Read-Host "Enter the UPN for the user (PreferredFirst.Last@blueravensolar.com)"
     $isValidEmail = Validate-BrsEmail $upn
     while (-not($isValidEmail))
     {
@@ -205,12 +205,12 @@ function Get-UserLicenses($user)
     }
 
     $licenseDetails = Get-MGUserLicenseDetail -UserId $user.UserPrincipalName
-    $licenses = New-Object System.Collections.Generic.List[String]
+    $licenses = New-Object System.Collections.Generic.List[object]
 
     foreach ($license in $licenseDetails)
     {
         $licenseName = $script:licenseLookupTable[$license.SkuId]
-        $licenses.Add($licenseName)
+        $licenses.Add( @{"Name" = $licenseName; "SkuId" = $license.SkuId} )
     }
 
     return Write-Output $licenses -NoEnumerate
@@ -242,7 +242,7 @@ function Show-UserProperties($user, $manager, $licenses, $groups, $adminRoles)
     $basicProps | Out-Host
 
     Show-Separator "Licenses"
-    $licenses | Sort-Object | Out-Host
+    $licenses | Select-Object -ExpandProperty "Name" | Sort-Object | Out-Host
 
     Show-Separator "Groups"
     $groups | Sort-Object | Out-Host
@@ -282,14 +282,14 @@ function Show-Separator($title, [ConsoleColor]$color = "DarkCyan", [switch]$noLi
     Write-Host $separator -ForegroundColor $color
 }
 
-function Prompt-MainMenu 
+function Prompt-MainMenu
 {
-    $selection = Read-Host ("What next?`n" +
+    $selection = Read-Host ("`nWhat next?`n" +
     "[1] Show M365 User Info`n" +
-    "[2] $(New-Checkbox($licenseStepCompleted)) Grant licenses`n" +
-    "[3] $(New-Checkbox($groupStepCompleted)) Assign groups`n" +
-    "[4] $(New-Checkbox($mailboxStepCompleted)) Grant shared mailboxes`n" +
-    "[5] $(New-Checkbox($gotoStepCompleted)) Setup GoTo Account`n" +
+    "[2] $(New-Checkbox($script:grantLicensesCompleted)) Grant licenses`n" +
+    "[3] $(New-Checkbox($script:assignGroupsCompleted)) Assign groups`n" +
+    "[4] $(New-Checkbox($script:mailboxStepCompleted)) Grant shared mailboxes`n" +
+    "[5] $(New-Checkbox($script:gotoStepCompleted)) Setup GoTo Account`n" +
     "[6] Finish`n")
 
     do
@@ -333,13 +333,48 @@ function Prompt-BrsEmail
 
 function Start-M365LicenseWizard($user)
 {
+    $keepGoing = $true
+    while ($keepGoing)
+    {
+        $selection = Prompt-LicenseMenu
+
+        switch ($selection)
+        {
+            1 # View assigned licenses
+            {
+                Write-Host "Current assigned licenses:" -ForegroundColor $infoColor
+                Get-UserLicenses $user | Select-Object -ExpandProperty "Name" | Sort-Object | Out-Host
+            }
+            2 # Grant license
+            {
+                $availableLicenses = Get-AvailableLicenses
+                $license = Prompt-LicenseToGrant $availableLicenses
+                Grant-License -User $user -License $license
+                $script:grantLicensesCompleted = $true
+            }
+            3 # Revoke license
+            {
+                $assignedLicenses = Get-UserLicenses -User $user
+                $license = Prompt-LicenseToRevoke $assignedLicenses
+                Revoke-License -User $user -License $license
+            }
+            4 # Finish
+            {
+                $keepGoing = $false
+            }
+        }
+    }
+}
+
+function Prompt-LicenseMenu
+{
     do
     {
         $response = Read-Host ("`nChoose an option:`n" +
-                               "[1] View assigned licenses`n" +                        
-                               "[2] Grant license`n" +
-                               "[3] Revoke license`n" +
-                               "[4] Finish`n")
+            "[1] View assigned licenses`n" +                        
+            "[2] Grant license`n" +
+            "[3] Revoke license`n" +
+            "[4] Finish with licenses`n")
         
         $validResponse = $response -imatch '^\s*[1-4]\s*$' # regex matches 1-4 but allows spaces
         if (-not($validResponse))
@@ -349,32 +384,7 @@ function Start-M365LicenseWizard($user)
     }
     while (-not($validResponse))
 
-    $response = $response.Trim()
-
-    switch ($response)
-    {
-        1
-        {
-            Write-Host "Current assigned licenses:" -ForegroundColor $infoColor
-            Get-UserLicenses $user | Sort-Object | Out-Host
-        }
-        2
-        {
-            $availableLicenses = Get-AvailableLicenses
-            $license = Prompt-LicenseToAssign $availableLicenses
-            Grant-License -User $user -License $license
-        }
-        3
-        {
-            # Get users assigned licenses
-            # Choose one to revoke
-            # Revoke-License -User $user -License $license
-        }
-        4
-        {
-            # finish
-        }
-    }
+    return [int]$response
 }
 
 function Get-AvailableLicenses
@@ -402,7 +412,7 @@ function Get-AvailableLicenses
     return Write-Output $licenseTable -NoEnumerate
 }
 
-function Prompt-LicenseToAssign($availableLicenses)
+function Prompt-LicenseToGrant($availableLicenses)
 {
     $option = 0
     $availableLicenses | Sort-Object -Property "Name" | ForEach-Object { $option++; $_ | Add-Member -NotePropertyName "Option" -NotePropertyValue $option }
@@ -411,11 +421,11 @@ function Prompt-LicenseToAssign($availableLicenses)
     do
     {
         $response = (Read-Host "Select an option (1 - $option)") -As [int]
-        # check that response is a number between 1 and option count (avoids use of regex because that's not great for matching number ranges)
+        # check that response is a number between 1 and option count (avoids use of regex because that's not great for matching multi-digit number ranges)
         $validResponse = ($response -is [int]) -and (($response -ge 1) -and ($response -le $option))
         if (-not($validResponse)) 
         {
-            Write-Host "Please enter 1 through $option." -ForegroundColor $warningColor
+            Write-Host "Please enter a number 1-$option." -ForegroundColor $warningColor
         }
     }
     while (-not($validResponse))
@@ -434,8 +444,7 @@ function Grant-License($user, $license)
 {
     try
     {
-        $skuId = $license.SkuId
-        Set-MgUserLicense -UserId $user.Id -AddLicenses @{SkuId = $skuId} -RemoveLicenses @() -ErrorAction "Stop" | Out-Null
+        Set-MgUserLicense -UserId $user.Id -AddLicenses @{SkuId = $license.SkuId } -RemoveLicenses @() -ErrorAction "Stop" | Out-Null
         Write-Host "License granted: $($license.name)" -ForegroundColor $successColor
     }
     catch
@@ -446,12 +455,46 @@ function Grant-License($user, $license)
     }  
 }
 
+function Prompt-LicenseToRevoke($assignedLicenses)
+{    
+    $option = 0
+    $optionList = $assignedLicenses | Sort-Object "Name" | ForEach-Object { 
+        $option++
+        [PSCustomObject]@{
+            "Option" = $option
+            "Name" = $_.Name
+            "SkuId" = $_.SkuId
+        }
+    }
+    $optionList | Sort-Object -Property "Option" | Format-Table -Property @("Option", "Name") | Out-Host
+
+    do
+    {
+        $response = (Read-Host "Select an option (1 - $option)") -As [int]
+        # check that response is a number between 1 and option count (avoids use of regex because that's not great for matching multi-digit number ranges)
+        $validResponse = ($response -is [int]) -and (($response -ge 1) -and ($response -le $option))
+        if (-not($validResponse)) 
+        {
+            Write-Host "Please enter a number 1-$option." -ForegroundColor $warningColor
+        }
+    }
+    while (-not($validResponse))
+
+    foreach ($license in $optionList)
+    {
+        if ($license.option -eq [int]$response)
+        {
+            return $license
+        }
+    }
+    return $null
+}
+
 function Revoke-License($user, $license)
 {
     try
     {
-        $skuId = $license.SkuId
-        Set-MgUserLicense -UserId $user.Id -AddLicenses @() -RemoveLicenses @($skuId) -ErrorAction "Stop" | Out-Null
+        Set-MgUserLicense -UserId $user.Id -AddLicenses @() -RemoveLicenses @($license.SkuId) -ErrorAction "Stop" | Out-Null
         Write-Host "License revoked: $($license.name)" -ForegroundColor $successColor
     }
     catch
@@ -482,6 +525,64 @@ function Prompt-YesOrNo($question)
         return $true
     }
     return $false
+}
+
+Start-M365GroupWizard
+{    
+    $keepGoing = $true
+    while ($keepGoing)
+    {
+        $selection = Prompt-GroupMenu
+
+        switch ($selection)
+        {
+            1 # View assigned groups
+            {
+
+            }
+            2 # Assign group
+            {
+                do
+                {
+                    $groupEmail = Prompt-BRSEmail -EmailType "group"
+                    $group = Get-M365Group $groupEmail
+                }
+                while ($null -eq $group)
+
+                Assign-M365Group -User $user -Group $group -ExistingGroups $groups
+                $script:assignGroupsCompleted = $true
+            }
+            3 # Remove group
+            {
+
+            }
+            4 # Finish with groups
+            {
+
+            }
+        }        
+    }    
+}
+
+function Prompt-GroupMenu
+{
+    do
+    {
+        $response = Read-Host ("`nChoose an option:`n" +
+            "[1] View assigned groups`n" +                        
+            "[2] Assign group`n" +
+            "[3] Remove group`n" +
+            "[4] Finish with groups`n")
+        
+        $validResponse = $response -imatch '^\s*[1-4]\s*$' # regex matches 1-4 but allows spaces
+        if (-not($validResponse))
+        {
+            Write-Host "Please enter 1-4." -ForegroundColor $warningColor
+        }
+    }
+    while (-not($validResponse))
+
+    return [int]$response
 }
 
 function Get-M365Group($email)

@@ -19,7 +19,7 @@ class GotoWizard
     GotoWizard($upn)
     {
         $this.upn = $upn
-        $this.gotoSecret = GetApiSecret()
+        $this.gotoSecret = $this.GetApiSecret()
         $this.clientId = $this.gotoSecret.ClientId
         $this.clientSecret = $this.gotoSecret.ClientSecret
         $this.accountKey = $this.gotoSecret.AccountKey

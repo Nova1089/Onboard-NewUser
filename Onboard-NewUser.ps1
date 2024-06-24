@@ -32,71 +32,71 @@ if ($null -ne $user)
     Show-UserProperties -User $user -Manager $manager -Licenses $licenses -Groups $groups -AdminRoles $adminRoles
 }
 
-$script:licenseStepCompleted = $false
-$script:groupStepCompleted = $false
+$script:grantLicensesCompleted = $false
+$script:assignGroupsCompleted = $false
 $script:mailboxStepCompleted = $false
 $script:gotoStepCompleted = $false
 
-$mainMenuSelection = Prompt-MainMenu
-
-switch ($mainMenuSelection)
+$keepGoing = $true
+while ($keepGoing)
 {
-    1
-    {
-        if ($null -ne $user)
-        {
-            $manager = Get-UserManager $user 
-            $licenses = Get-UserLicenses $user 
-            $groups = Get-UserGroups $user
-            $adminRoles = Get-UserAdminRoles $user
-            Show-UserProperties -User $user -Manager $manager -Licenses $licenses -Groups $groups -AdminRoles $adminRoles
-        }
-    }
-    2
-    {
-        Write-Host "You selected option 2! (Grant licenses)" -ForegroundColor $infoColor
-        Start-M365LicenseWizard $user
-        $script:licenseStepCompleted = $true
-    }
-    3
-    {
-        Write-Host "You selected option 3! (Assign groups)" -ForegroundColor $infoColor
-        $script:groupStepCompleted = $true
-        do
-        {
-            $groupEmail = Prompt-BRSEmail -EmailType "group"
-            $group = Get-M365Group $groupEmail
-        }
-        while ($null -eq $group)
+    $mainMenuSelection = Prompt-MainMenu
 
-        Assign-M365Group -User $user -Group $group -ExistingGroups $groups
-    }
-    4
+    switch ($mainMenuSelection)
     {
-        Write-Host "You selected option 4! (Grant shared mailboxes)" -ForegroundColor $infoColor
-        $script:mailboxStepCompleted = $true
-        do
+        1 # Show M365 user info
         {
-            $mailboxEmail = Prompt-BrsEmail -EmailType "mailbox"
-            $mailbox = Get-SharedMailbox $mailboxEmail
+            if ($null -ne $user)
+            {
+                $manager = Get-UserManager $user 
+                $licenses = Get-UserLicenses $user 
+                $groups = Get-UserGroups $user
+                $adminRoles = Get-UserAdminRoles $user
+                Show-UserProperties -User $user -Manager $manager -Licenses $licenses -Groups $groups -AdminRoles $adminRoles
+            }
         }
-        while ($null -eq $mailbox)
+        2 # Grant licenses
+        {
+            Start-M365LicenseWizard $user
+        }
+        3 # Assign groups
+        {
+            Write-Host "You selected option 3! (Assign groups)" -ForegroundColor $infoColor
+            $script:assignGroupsCompleted = $true
+            do
+            {
+                $groupEmail = Prompt-BRSEmail -EmailType "group"
+                $group = Get-M365Group $groupEmail
+            }
+            while ($null -eq $group)
 
-        Grant-MailboxAccess -User $user -Mailbox $mailbox
-    }
-    5
-    {
-        Write-Host "You selected option 5! (Setup GoTo account)" -ForegroundColor $infoColor
-        $script:gotoStepCompleted = $true
-        $gotoWizard = [GotoWizard]::New($upn)
-        $gotoWizard.Start()
-    }
-    6
-    {
-        Write-Host "You selected option 6! (Finish)" -ForegroundColor $infoColor
+            Assign-M365Group -User $user -Group $group -ExistingGroups $groups
+        }
+        4 # Grant shared mailboxes
+        {
+            Write-Host "You selected option 4! (Grant shared mailboxes)" -ForegroundColor $infoColor
+            $script:mailboxStepCompleted = $true
+            do
+            {
+                $mailboxEmail = Prompt-BrsEmail -EmailType "mailbox"
+                $mailbox = Get-SharedMailbox $mailboxEmail
+            }
+            while ($null -eq $mailbox)
+
+            Grant-MailboxAccess -User $user -Mailbox $mailbox
+        }
+        5 # Setup GoTo account
+        {
+            Write-Host "You selected option 5! (Setup GoTo account)" -ForegroundColor $infoColor
+            $script:gotoStepCompleted = $true
+            $gotoWizard = [GotoWizard]::New($upn)
+            $gotoWizard.Start()
+        }
+        6 # Finish
+        {
+           $keepGoing = $false
+        }
     }
 }
-
-$mainMenuSelection = Prompt-MainMenu
 
 Read-Host "Press Enter to exit"
