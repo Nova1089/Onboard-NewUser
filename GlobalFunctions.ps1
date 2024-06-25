@@ -218,12 +218,12 @@ function Get-UserLicenses($user)
 
 function Get-UserGroups($user)
 {
-    return Get-MgUserMemberOfAsGroup -UserId $user.UserPrincipalName | Select-Object -ExpandProperty "DisplayName"
+    return Get-MgUserMemberOfAsGroup -UserId $user.UserPrincipalName
 }
 
 function Get-UserAdminRoles($user)
 {
-    return Get-MgUserMemberOfAsDirectoryRole -UserId $user.UserPrincipalName | Select-Object -ExpandProperty "DisplayName"
+    return Get-MgUserMemberOfAsDirectoryRole -UserId $user.UserPrincipalName
 }
 
 function Show-UserProperties($user, $manager, $licenses, $groups, $adminRoles)
@@ -245,10 +245,10 @@ function Show-UserProperties($user, $manager, $licenses, $groups, $adminRoles)
     $licenses | Select-Object -ExpandProperty "Name" | Sort-Object | Out-Host
 
     Show-Separator "Groups"
-    $groups | Sort-Object | Out-Host
+    $groups | Select-Object -ExpandProperty "DisplayName" | Sort-Object | Out-Host
     
     Show-Separator "Admin Roles"
-    $adminRoles | Sort-Object | Out-Host
+    $adminRoles | Select-Object -ExpandProperty "DisplayName" | Sort-Object | Out-Host
     
     Write-Host "`n"
 }
@@ -344,6 +344,7 @@ function Start-M365LicenseWizard($user)
             {
                 Write-Host "Current assigned licenses:" -ForegroundColor $infoColor
                 Get-UserLicenses $user | Select-Object -ExpandProperty "Name" | Sort-Object | Out-Host
+                break
             }
             2 # Grant license
             {
@@ -351,16 +352,19 @@ function Start-M365LicenseWizard($user)
                 $license = Prompt-LicenseToGrant $availableLicenses
                 Grant-License -User $user -License $license
                 $script:grantLicensesCompleted = $true
+                break
             }
             3 # Revoke license
             {
                 $assignedLicenses = Get-UserLicenses -User $user
                 $license = Prompt-LicenseToRevoke $assignedLicenses
                 Revoke-License -User $user -License $license
+                break
             }
             4 # Finish
             {
                 $keepGoing = $false
+                break
             }
         }
     }
@@ -527,18 +531,19 @@ function Prompt-YesOrNo($question)
     return $false
 }
 
-Start-M365GroupWizard
+function Start-M365GroupWizard($user)
 {    
     $keepGoing = $true
     while ($keepGoing)
     {
         $selection = Prompt-GroupMenu
 
-        switch ($selection)
+        # We give this switch statement a label so we can break out of it from a nested loop.
+        :outerSwitch switch ($selection)
         {
             1 # View assigned groups
             {
-
+                break
             }
             2 # Assign group
             {
@@ -546,19 +551,29 @@ Start-M365GroupWizard
                 {
                     $groupEmail = Prompt-BRSEmail -EmailType "group"
                     $group = Get-M365Group $groupEmail
+                    if ($null -eq $group) { continue }
+
+                    $isAlreadyMember = Test-IsMemberOfGroup -User $user -Group $group
+                    if ($isAlreadyMember)
+                    {
+                        Write-Host "$($user.DisplayName) is already a member of the group: $($group.DisplayName)." -ForegroundColor $warningColor
+                        break outerSwitch
+                    }
                 }
                 while ($null -eq $group)
 
-                Assign-M365Group -User $user -Group $group -ExistingGroups $groups
+                Assign-M365Group -User $user -Group $group
                 $script:assignGroupsCompleted = $true
+                break      
             }
             3 # Remove group
             {
-
+                break
             }
             4 # Finish with groups
             {
-
+                $keepGoing = $false
+                break
             }
         }        
     }    
@@ -600,14 +615,21 @@ function Get-M365Group($email)
     return $group
 }
 
-function Assign-M365Group($user, $group, $existingGroups)
+function Test-IsMemberOfGroup($user, $group)
 {
-    if ($existingGroups -contains $group.DisplayName)
+    $currentAssignedGroups = Get-UserGroups -User $user
+    foreach ($assignedGroup in $currentAssignedGroups)
     {
-        Write-Host "$($user.DisplayName) is already a member of that group." -ForegroundColor $warningColor
-        return
+        if ($assignedGroup.Id -eq $group.Id)
+        {            
+            return $true
+        }
     }
-    
+    return $false
+}
+
+function Assign-M365Group($user, $group)
+{  
     try
     {
         New-MgGroupMember -GroupId $group.Id -DirectoryObjectId $user.Id -ErrorAction "Stop" | Out-Null
@@ -653,15 +675,18 @@ function Grant-MailboxAccess($user, $mailbox)
             1
             {
                 Add-MailboxPermission -Identity $mailbox.PrimarySmtpAddress -User $user.UserPrincipalName -AccessRights "FullAccess" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop" | Out-Null
+                break
             }
             2
             {
                 Add-RecipientPermission -Identity $mailbox.PrimarySmtpAddress -Trustee $user.UserPrincipalName -AccessRights "SendAs" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop" | Out-Null
+                break
             }
             3
             {
                 Add-MailboxPermission -Identity $mailbox.PrimarySmtpAddress -User $user.UserPrincipalName -AccessRights "FullAccess" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop" | Out-Null
                 Add-RecipientPermission -Identity $mailbox.PrimarySmtpAddress -Trustee $user.UserPrincipalName -AccessRights "SendAs" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop" | Out-Null
+                break
             }
         }
         Write-Host "Successfully granted access! (If they didn't already have the access.)" -ForegroundColor $successColor
