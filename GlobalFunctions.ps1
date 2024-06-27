@@ -1,4 +1,4 @@
-#  functions
+# functions
 function Initialize-ColorScheme
 {
     Set-Variable -Name "successColor" -Value "Green" -Scope "Script"
@@ -164,6 +164,10 @@ function Get-M365User($upn)
     {
         Write-Host "User does not exist yet." -ForegroundColor $infoColor
     }
+    else
+    {   
+        Write-Host "User found!" -ForegroundColor $successColor
+    }    
     return $user
 }
 
@@ -210,7 +214,7 @@ function Get-UserLicenses($user)
     foreach ($license in $licenseDetails)
     {
         $licenseName = $script:licenseLookupTable[$license.SkuId]
-        $licenses.Add( @{"Name" = $licenseName; "SkuId" = $license.SkuId} )
+        $licenses.Add( [PSCustomObject]@{"Name" = $licenseName; "SkuId" = $license.SkuId} )
     }
 
     return Write-Output $licenses -NoEnumerate
@@ -228,8 +232,6 @@ function Get-UserAdminRoles($user)
 
 function Show-UserProperties($user, $manager, $licenses, $groups, $adminRoles)
 {
-    Write-Host "User found!" -ForegroundColor $successColor
-
     $basicProps = [PSCustomObject]@{
         "Created Date/Time" = $user.CreatedDateTime
         "Display Name"      = $user.DisplayName
@@ -286,10 +288,10 @@ function Prompt-MainMenu
 {
     $selection = Read-Host ("`nWhat next?`n" +
     "[1] Show M365 User Info`n" +
-    "[2] $(New-Checkbox($script:grantLicensesCompleted)) Grant licenses`n" +
-    "[3] $(New-Checkbox($script:assignGroupsCompleted)) Assign groups`n" +
-    "[4] $(New-Checkbox($script:mailboxStepCompleted)) Grant shared mailboxes`n" +
-    "[5] $(New-Checkbox($script:gotoStepCompleted)) Setup GoTo Account`n" +
+    "[2] $(New-Checkbox($script:grantLicensesCompleted)) Manage licenses`n" +
+    "[3] $(New-Checkbox($script:assignGroupsCompleted)) Manage groups`n" +
+    "[4] $(New-Checkbox($script:grantMailboxesCompleted)) Manage shared mailboxes`n" +
+    "[5] $(New-Checkbox($script:gotoStepCompleted)) Setup GoTo account`n" +
     "[6] Finish`n")
 
     do
@@ -316,7 +318,7 @@ function Prompt-BrsEmail
 
     do
     {
-        $email = Read-Host "Enter $emailType email (you may omit the @blueravensolar.com)"
+        $email = Read-Host "`nEnter $emailType email (you may omit the @blueravensolar.com)"
     }
     while ($null -eq $email)
 
@@ -337,13 +339,14 @@ function Start-M365LicenseWizard($user)
     while ($keepGoing)
     {
         $selection = Prompt-LicenseMenu
-
         switch ($selection)
         {
             1 # View assigned licenses
             {
-                Write-Host "Current assigned licenses:" -ForegroundColor $infoColor
-                Get-UserLicenses $user | Select-Object -ExpandProperty "Name" | Sort-Object | Out-Host
+                Show-Separator "Licenses"
+                # Capture this in a var first because Get-UserLicenses does not work in the pipeline. (It doesn't enumerate its output!)
+                $licenses = Get-UserLicenses $user 
+                $licenses | Select-Object -ExpandProperty "Name" | Sort-Object | Out-Host
                 break
             }
             2 # Grant license
@@ -356,7 +359,7 @@ function Start-M365LicenseWizard($user)
             }
             3 # Revoke license
             {
-                $assignedLicenses = Get-UserLicenses -User $user
+                $assignedLicenses = Get-UserLicenses $user
                 $license = Prompt-LicenseToRevoke $assignedLicenses
                 Revoke-License -User $user -License $license
                 break
@@ -532,17 +535,19 @@ function Prompt-YesOrNo($question)
 }
 
 function Start-M365GroupWizard($user)
-{    
+{
     $keepGoing = $true
     while ($keepGoing)
     {
         $selection = Prompt-GroupMenu
 
-        # We give this switch statement a label so we can break out of it from a nested loop.
+        # We give this switch statement a label so we can break out of it from nested loops.
         :outerSwitch switch ($selection)
         {
             1 # View assigned groups
             {
+                Show-Separator "Groups"
+                Get-UserGroups -User $user | Select-Object -ExpandProperty "DisplayName" | Sort-Object | Out-Host
                 break
             }
             2 # Assign group
@@ -551,16 +556,23 @@ function Start-M365GroupWizard($user)
                 {
                     $groupEmail = Prompt-BRSEmail -EmailType "group"
                     $group = Get-M365Group $groupEmail
-                    if ($null -eq $group) { continue }
+                    if ($null -eq $group)
+                    {
+                        $tryAgain = Prompt-YesOrNo "Try again?"
+                        if (-not($tryAgain)) { break outerSwitch}
+                        continue
+                    }
 
                     $isAlreadyMember = Test-IsMemberOfGroup -User $user -Group $group
                     if ($isAlreadyMember)
                     {
                         Write-Host "$($user.DisplayName) is already a member of the group: $($group.DisplayName)." -ForegroundColor $warningColor
-                        break outerSwitch
+                        $tryAgain = Prompt-YesOrNo "Try again?"
+                        if (-not($tryAgain)) { break outerSwitch }
+                        continue
                     }
                 }
-                while ($null -eq $group)
+                while (($null -eq $group) -or ($isAlreadyMember))
 
                 Assign-M365Group -User $user -Group $group
                 $script:assignGroupsCompleted = $true
@@ -568,6 +580,29 @@ function Start-M365GroupWizard($user)
             }
             3 # Remove group
             {
+                do
+                {
+                    $groupEmail = Prompt-BRSEmail -EmailType "group"
+                    $group = Get-M365Group $groupEmail
+                    if ($null -eq $group)
+                    {
+                        $tryAgain = Prompt-YesOrNo "Try again?"
+                        if (-not($tryAgain)) { break outerSwitch }
+                        continue
+                    }
+
+                    $isAlreadyMember = Test-IsMemberOfGroup -User $user -Group $group
+                    if (-not($isAlreadyMember))
+                    {
+                        Write-Host "$($user.DisplayName) is not a member of the group: $($group.DisplayName)." -ForegroundColor $warningColor
+                        $tryAgain = Prompt-YesOrNo "Try again?"
+                        if (-not($tryAgain)) { break outerSwitch }
+                        continue
+                    }
+                }
+                while (($null -eq $group) -or (-not($isAlreadyMember)))
+
+                Unassign-M365Group -User $user -Group $group
                 break
             }
             4 # Finish with groups
@@ -575,8 +610,8 @@ function Start-M365GroupWizard($user)
                 $keepGoing = $false
                 break
             }
-        }        
-    }    
+        }
+    }
 }
 
 function Prompt-GroupMenu
@@ -633,20 +668,120 @@ function Assign-M365Group($user, $group)
     try
     {
         New-MgGroupMember -GroupId $group.Id -DirectoryObjectId $user.Id -ErrorAction "Stop" | Out-Null
+        Write-Host "Group assigned: $($group.Mail)" -ForegroundColor $successColor
     }
     catch
     {
         $errorRecord = $_
-        Write-Host "There was an issue assigning the group." -ForegroundColor $failColor
-        Write-Host $errorRecord.Exception.Message -ForegroundColor $failColor
+        Write-Host "There was an issue assigning the group." -ForegroundColor $warningColor
+        Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
     }    
 }
 
-function Get-SharedMailbox($email)
+function Unassign-M365Group($user, $group)
 {
-    if ($null -eq $email) { throw "Can't get shared mailbox. Email is null." }
+    try
+    {
+        Remove-MgGroupMemberByRef -GroupId $group.Id -DirectoryObjectId $user.Id -ErrorAction "Stop" | Out-Null
+        Write-Host "Group removed: $($group.Mail)" -ForegroundColor $successColor
+    }
+    catch
+    {
+        $errorRecord = $_
+        Write-Host "There was an issue unassigning the group." -ForegroundColor $warningColor
+        Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
+    }
+}
 
-    $mailbox = Get-EXOMailbox -Identity $email -ErrorAction "SilentlyContinue"
+function Start-MailboxWizard($user)
+{
+    $keepGoing = $true
+    while ($keepGoing)
+    {
+        $selection = Prompt-MailboxMenu
+
+        # We give this switch statement a label so we can break out of it from nested loops.
+        :outerSwitch switch ($selection)
+        {
+            1 # View assigned mailboxes
+            {
+                Write-Host ("Sorry, at this time there is no fast way to get all assigned mailboxes for a user.`n" +
+                            "For that you may run this script instead, but it takes a little while...`n" +
+                            "https://help.blueravensolar.com/a/solutions/articles/19000077594") -ForegroundColor $infoColor
+                break
+            }
+            2 # Grant access to mailbox
+            {
+                do
+                {
+                    $mailboxUpn = Prompt-BRSEmail -EmailType "mailbox"
+                    $mailbox = Get-SharedMailbox $mailboxUpn
+                    if ($null -eq $mailbox)
+                    {
+                        $tryAgain = Prompt-YesOrNo "Try again?"
+                        if (-not($tryAgain)) { break outerSwitch }
+                        continue
+                    }
+                }
+                while ($null -eq $mailbox)
+
+                Grant-MailboxAccess -User $user -Mailbox $mailbox
+                $script:grantMailboxesCompleted = $true
+                break
+            }
+            3 # Revoke access to mailboxe
+            {
+                do
+                {
+                    $mailboxUpn = Prompt-BRSEmail -EmailType "mailbox"
+                    $mailbox = Get-SharedMailbox $mailboxUpn
+                    if ($null -eq $mailbox)
+                    {
+                        $tryAgain = Prompt-YesOrNo "Try again?"
+                        if (-not($tryAgain)) { break outerSwitch }
+                        continue
+                    }
+                }
+                while ($null -eq $mailbox)
+
+                Revoke-MailboxAccess -User $user -Mailbox $mailbox
+                break
+            }
+            4 # Finish with mailboxes
+            {
+                $keepGoing = $false
+                break
+            }
+        }
+    }
+}
+
+function Prompt-MailboxMenu
+{
+    do
+    {
+        $response = Read-Host ("`nChoose an option:`n" +
+            "[1] View assigned mailboxes`n" +                        
+            "[2] Grant access to mailbox`n" +
+            "[3] Revoke access to mailbox`n" +
+            "[4] Finish with mailboxes`n")
+        
+        $validResponse = $response -imatch '^\s*[1-4]\s*$' # regex matches 1-4 but allows spaces
+        if (-not($validResponse))
+        {
+            Write-Host "Please enter 1-4." -ForegroundColor $warningColor
+        }
+    }
+    while (-not($validResponse))
+
+    return [int]$response
+}
+
+function Get-SharedMailbox($upn)
+{
+    if ($null -eq $upn) { throw "Can't get shared mailbox. UPN is null." }
+
+    $mailbox = Get-EXOMailbox -Identity $upn -ErrorAction "SilentlyContinue"
     if (($mailbox) -and ($mailbox.RecipientTypeDetails -eq 'SharedMailbox'))
     {
         Write-Host "Mailbox found!" -ForegroundColor $successColor
@@ -666,48 +801,81 @@ function Get-SharedMailbox($email)
 
 function Grant-MailboxAccess($user, $mailbox)
 {
-   $accessType = Prompt-MailboxAccessType
-
-   try
-   {
+    Write-Host "Access type to grant?`n" 
+    $accessType = Prompt-MailboxAccessType
+    try
+    {
         switch ($accessType)
         {
-            1
+            1 # Read and Manage
             {
-                Add-MailboxPermission -Identity $mailbox.PrimarySmtpAddress -User $user.UserPrincipalName -AccessRights "FullAccess" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop" | Out-Null
+                Add-MailboxPermission -Identity $mailbox.UserPrincipalName -User $user.UserPrincipalName -AccessRights "FullAccess" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop" | Out-Null
                 break
             }
-            2
+            2 # Send As
             {
-                Add-RecipientPermission -Identity $mailbox.PrimarySmtpAddress -Trustee $user.UserPrincipalName -AccessRights "SendAs" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop" | Out-Null
+                Add-RecipientPermission -Identity $mailbox.UserPrincipalName -Trustee $user.UserPrincipalName -AccessRights "SendAs" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop" | Out-Null
                 break
             }
-            3
+            3 # Both
             {
-                Add-MailboxPermission -Identity $mailbox.PrimarySmtpAddress -User $user.UserPrincipalName -AccessRights "FullAccess" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop" | Out-Null
-                Add-RecipientPermission -Identity $mailbox.PrimarySmtpAddress -Trustee $user.UserPrincipalName -AccessRights "SendAs" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop" | Out-Null
+                Add-MailboxPermission -Identity $mailbox.UserPrincipalName -User $user.UserPrincipalName -AccessRights "FullAccess" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop" | Out-Null
+                Add-RecipientPermission -Identity $mailbox.UserPrincipalName -Trustee $user.UserPrincipalName -AccessRights "SendAs" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop" | Out-Null
                 break
             }
         }
-        Write-Host "Successfully granted access! (If they didn't already have the access.)" -ForegroundColor $successColor
-   }
-   catch
-   {
+        Write-Host "Granted access to mailbox! (If they didn't already have the access.)" -ForegroundColor $successColor
+    }
+    catch
+    {
+            $errorRecord = $_
+            Write-Host "There was an issue granting mailbox access. Please try again." -ForegroundColor $warningColor
+            Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
+    }    
+}
+
+function Revoke-MailboxAccess($user, $mailbox)
+{
+    Write-Host "Access type to revoke?`n"
+    $accessType = Prompt-MailboxAccessType
+    try
+    {
+        switch ($accessType)
+        {
+            1 # Read and Manage
+            {
+                Remove-MailboxPermission -Identity $mailbox.UserPrincipalName -User $user.UserPrincipalName -AccessRights "FullAccess" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop"
+                break
+            }
+            2 # Send As
+            {
+                Remove-RecipientPermission -Identity $mailbox.UserPrincipalName -Trustee $user.UserPrincipalName -AccessRights "SendAs" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop"
+                break
+            }
+            3 # Both
+            {
+                Remove-MailboxPermission -Identity $mailbox.UserPrincipalName -User $user.UserPrincipalName -AccessRights "FullAccess" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop"
+                Remove-RecipientPermission -Identity $mailbox.UserPrincipalName -Trustee $user.UserPrincipalName -AccessRights "SendAs" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop"
+                break
+            }
+        }
+        Write-Host "Revoked access to mailbox! (Assuming they had access.)" -ForegroundColor $successColor
+    }
+    catch
+    {
         $errorRecord = $_
-        Write-Host "There was an issue granting mailbox access. Please try again." -ForegroundColor $warningColor
+        Write-Host "There was an issue revoking mailbox access. Please try again." -ForegroundColor $warningColor
         Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
-   }    
+    }
 }
 
 function Prompt-MailboxAccessType
 {
     do
     {
-        $accessType = Read-Host  ("Access type?`n`n" +
-            "[1] Read & Manage`n" +
-            "[2] Send As`n" +
-            "[3] Both`n")
-
+        $accessType = Read-Host  ("[1] Read & Manage`n" +
+                                  "[2] Send As`n" +
+                                  "[3] Both`n")
         $accessType = $accessType.Trim()
         $isValidResponse = $accessType -imatch '^[1-3]$' # regex matches 1-3
 
@@ -718,7 +886,7 @@ function Prompt-MailboxAccessType
     }
     while (-not($isValidResponse))
 
-    return $accessType
+    return [int]$accessType
 }
 
 function UriEncode-QueryParam($queryParam)
