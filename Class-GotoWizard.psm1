@@ -5,12 +5,12 @@ class GotoWizard
 {
     # properties
     [string] $upn
-    [string] $gotoSecret
+    [object] $gotoSecret
     [string] $clientId
     [string] $clientSecret
     [string] $accountKey
     [string] $accessToken
-    [object] $user
+    [object] $gotoUser
     [System.Collections.Specialized.OrderedDictionary] $allCustomRoles
     [bool] $roleStepCompleted
     [bool] $cidStepCompleted
@@ -20,11 +20,11 @@ class GotoWizard
     {
         $this.upn = $upn
         $this.gotoSecret = $this.GetApiSecret()
-        $this.clientId = $this.gotoSecret.ClientId
+        $this.clientId = $this.gotoSecret.ClientID
         $this.clientSecret = $this.gotoSecret.ClientSecret
         $this.accountKey = $this.gotoSecret.AccountKey
         $this.accessToken = $this.GetAccessToken()
-        $this.user = $this.GetUser()
+        $this.gotoUser = $this.GetUser()
         $this.allCustomRoles = $this.GetAllCustomRoles()
     }
 
@@ -34,35 +34,45 @@ class GotoWizard
     # methods
     Start()
     {
-        if ($this.gotoUser)
+        if ($null -eq $this.gotoUser)
         {
-            Write-Host "Found Goto user!" -ForegroundColor $script:successColor
-            ShowUserInfo
-            $menuSelection = Prompt-GotoMenu
-            switch ($menuSelection)
-            {
-                1 # show user info
-                {
-                    ShowUserInfo
-                }
-                2 # assign role
-                {
-                    $roleSelection = PromptRoleToAssign
-                    AssignUserRole($roleSelection)
-                }
-                3 # assign outbound caller ID
-                {
-                    $this.DisplayLinkToOutboundCallerId()
-                }
-                4 # finish
-                {
-                    # break out of the goto wizard
-                }
-            }
+            Write-Host "Goto user not found." -ForegroundColor $script:warningColor
+            return
         }
         else
         {
-            Write-Host "Could not find goto user :(" -ForegroundColor $script:warningColor
+            Write-Host "Found GoTo user!" -ForegroundColor $script:successColor
+        }
+
+        $keepGoing = $true
+        while ($keepGoing)
+        {
+            $selection = $this.PromptMenu()
+
+            :outerSwitch switch ($selection)
+            {
+                1 # Show user info
+                {
+                    $this.ShowUserInfo()
+                    break
+                }
+                2 # Assign role
+                {
+                    $roleSelection = $this.PromptRoleToAssign()
+                    $this.AssignUserRole($roleSelection)
+                    break      
+                }
+                3 # Assign outbound caller ID
+                {
+                    $this.DisplayLinkToOutboundCallerId()
+                    break
+                }
+                4 # Finish
+                {
+                    $keepGoing = $false
+                    break
+                }
+            }
         }
     }
 
@@ -84,6 +94,23 @@ class GotoWizard
         $authCode = Invoke-OAuth2AuthorizationEndpoint -Uri $authUri -Client_id $this.clientId -Redirect_uri $redirectUri
         $token = Invoke-OAuth2TokenEndpoint @authCode -Uri $accessTokenUri -Client_secret $this.clientSecret -Client_auth_method "client_secret_basic"
         return $token.access_token
+    }
+
+    [int] PromptMenu()
+    {
+        $selection = Read-Host ("What next?`n`n" +
+            "[1] Show GoTo user info`n" +
+            "[2] $(New-Checkbox $this.roleStepCompleted) Assign role`n" +
+            "[3] $(New-Checkbox $this.cidStepCompleted) Assign outbound caller ID`n" +
+            "[4] Finish GoTo setup`n")
+
+        while ($selection -notmatch '^\s*[1-4]\s*$') # regex matches 1-4 but allows spaces
+        {
+            Write-Host "Please enter 1-4" -ForegroundColor $script:warningColor
+            $selection = Read-Host
+        }
+
+        return [int]$selection
     }
 
     [object[]] GetUser()
@@ -111,29 +138,29 @@ class GotoWizard
     {
         $role = $this.GetUserRole()
         # I'd also show their external caller ID, but this is not accessible from the public API.
-        $this.user | Add-Member -NotePropertyName "role" -NotePropertyValue $role -PassThru | Format-List -Property @("email", "firstName", "lastName", "role") | Out-Host
+        $this.gotoUser | Add-Member -NotePropertyName "role" -NotePropertyValue $role -PassThru | Format-List -Property @("email", "firstName", "lastName", "role") | Out-Host
     }
 
     [string] GetUserRole()
     {
         # Check for a built-in (system) admin role.
-        if ($this.user.adminRoles)
+        if ($this.gotoUser.adminRoles)
         {
-            if ($this.user.adminRoles -eq "SUPER_USER")
+            if ($this.gotoUser.adminRoles -eq "SUPER_USER")
             {
                 return "Super Admin"
             }
 
-            if ($this.user.adminRoles -eq "MANAGE_ACCOUNT")
+            if ($this.gotoUser.adminRoles -eq "MANAGE_ACCOUNT")
             {
                 return "Admin (Configure PBX)"
             }
         }
         
         # Check for a custom role.
-        if ($this.user.roleSets)
+        if ($this.gotoUser.roleSets)
         {
-            return $this.allCustomRoles[$this.user.roleSets]
+            return $this.allCustomRoles[$this.gotoUser.roleSets]
         }
 
         # If they have no built-in (system) admin role or custom role, their role is simply "Member".
@@ -157,22 +184,6 @@ class GotoWizard
             $roles.Add($role.id, $role.name)
         }
         return $roles
-    }
-
-    [int] PromptMenu()
-    {
-        $selection = Read-Host ("What next?`n`n" +
-            "[1] Show Goto User Info`n" +
-            "[2] $(New-Checkbox $this.roleStepCompleted) Assign role`n" +
-            "[3] $(New-Checkbox $this.cidStepCompleted) Assign outbound caller ID`n" +
-            "[4] Finish Goto setup`n")
-
-        while ($selection -notmatch '^\s*[1-4]\s*$') # regex matches 1-4 but allows spaces
-        {
-            $selection = Read-Host "Please enter 1-4"
-        }
-
-        return [int]$selection.Trim()
     }
 
     [int] PromptRoleToAssign()
@@ -212,32 +223,32 @@ class GotoWizard
         {
             1 # selection is Super Admin
             {
-                $uri = "https://api.getgo.com/admin/rest/v1/accounts/$($this.accountKey)/users/$($this.user.key)"
+                $uri = "https://api.getgo.com/admin/rest/v1/accounts/$($this.accountKey)/users/$($this.gotoUser.key)"
                 $body = @{
                     "adminRoles" = @("SUPER_USER")
                 }
             }
             2 # selection is Admin (Configure PBX)
             {
-                $uri = "https://api.getgo.com/admin/rest/v1/accounts/$($this.accountKey)/users/$($this.user.key)"
+                $uri = "https://api.getgo.com/admin/rest/v1/accounts/$($this.accountKey)/users/$($this.gotoUser.key)"
                 $body = @{
                     "adminRoles" = @("MANAGE_ACCOUNT")
                 }
             }
             3 # selection is member
             {
-                if ($this.user.adminRoles) # user has a built-in (system) admin role that must be removed
+                if ($this.gotoUser.adminRoles) # user has a built-in (system) admin role that must be removed
                 {
-                    $uri = "https://api.getgo.com/admin/rest/v1/accounts/$($this.accountKey)/users/$($this.user.key)"
+                    $uri = "https://api.getgo.com/admin/rest/v1/accounts/$($this.accountKey)/users/$($this.gotoUser.key)"
                     $body = @{ 
                         "adminRoles" = @() # set admin role to blank array
                     }
                 }
-                elseif ($this.user.roleSets) # user has a custom role that must be removed
+                elseif ($this.gotoUser.roleSets) # user has a custom role that must be removed
                 {
                     $method = "Delete"
                     $uri = "https://api.getgo.com/admin/rest/v1/accounts/$($this.accountKey)/users/rolesets"
-                    $emailQuery = "email eq `"$($this.user.email)`""
+                    $emailQuery = "email eq `"$($this.gotoUser.email)`""
                     $emailQuery = UriEncode-QueryParam $emailQuery
                     $uri = $uri + "?filter=$emailQuery"
                 }
@@ -246,7 +257,7 @@ class GotoWizard
             {
                 $roleId = @($this.allCustomRoles.keys)[$roleSelection - 4] # enumerates the keys and accesses them by index
                 $uri = "https://api.getgo.com/admin/rest/v1/accounts/$($this.accountKey)/rolesets/$roleId/users"
-                $emailQuery = "email eq `"$($this.user.email)`""
+                $emailQuery = "email eq `"$($this.gotoUser.email)`""
                 $emailQuery = UriEncode-QueryParam $emailQuery
                 $uri = $uri + "?filter=$emailQuery"
             }
@@ -258,14 +269,14 @@ class GotoWizard
     DisplayLinkToOutboundCallerId()
     {
         $line = $this.GetLine()
-        Write-Host "At this time the GoTo API can't change the outbound caller ID. You'll need to change it here:" -ForegroundColor "DarkCyan"
-        Write-Host "https://my.jive.com/pbx/brs/extensions/lines/$($line.id)/general?source=root.nav.pbx.extensions.lines.list" -ForegroundColor "DarkCyan"
+        Write-Host "At this time the GoTo API can't change the outbound caller ID. You'll need to change it here:" -ForegroundColor $script:infoColor
+        Write-Host "https://my.jive.com/pbx/brs/extensions/lines/$($line.id)/general?source=root.nav.pbx.extensions.lines.list" -ForegroundColor $script:infoColor
     }
 
     [object] GetLine()
     {
         $method = "Get"
-        $uri = "https://api.goto.com/users/v1/users/$($this.user.key)/lines"
+        $uri = "https://api.goto.com/users/v1/users/$($this.gotoUser.key)/lines"
         $headers = @{
             "Authorization" = "Bearer $($this.accessToken)"
         }

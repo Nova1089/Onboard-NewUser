@@ -74,6 +74,7 @@ while ($keepGoing)
         5 # Setup GoTo account
         {
             $script:gotoStepCompleted = $true
+            Write-Host "About to call constructor"
             $gotoWizard = [GotoWizard]::New($upn)
             $gotoWizard.Start()
             break

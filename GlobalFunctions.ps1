@@ -619,10 +619,10 @@ function Prompt-GroupMenu
     do
     {
         $response = Read-Host ("`nChoose an option:`n" +
-            "[1] View assigned groups`n" +                        
-            "[2] Assign group`n" +
-            "[3] Remove group`n" +
-            "[4] Finish with groups`n")
+                                 "[1] View assigned groups`n" +                        
+                                 "[2] Assign group`n" +
+                                 "[3] Remove group`n" +
+                                 "[4] Finish with groups`n")
         
         $validResponse = $response -imatch '^\s*[1-4]\s*$' # regex matches 1-4 but allows spaces
         if (-not($validResponse))
