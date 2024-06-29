@@ -39,10 +39,7 @@ class GotoWizard
             Write-Host "Goto user not found." -ForegroundColor $script:warningColor
             return
         }
-        else
-        {
-            Write-Host "Found GoTo user!" -ForegroundColor $script:successColor
-        }
+        Write-Host "Found GoTo user!`n" -ForegroundColor $script:successColor
 
         $keepGoing = $true
         while ($keepGoing)
@@ -69,6 +66,7 @@ class GotoWizard
                 }
                 4 # Finish
                 {
+                    $script:gotoSetupCompleted = $true
                     $keepGoing = $false
                     break
                 }
@@ -98,7 +96,7 @@ class GotoWizard
 
     [int] PromptMenu()
     {
-        $selection = Read-Host ("What next?`n`n" +
+        $selection = Read-Host ("Choose an option:`n" +
             "[1] Show GoTo user info`n" +
             "[2] $(New-Checkbox $this.roleStepCompleted) Assign role`n" +
             "[3] $(New-Checkbox $this.cidStepCompleted) Assign outbound caller ID`n" +
@@ -106,7 +104,7 @@ class GotoWizard
 
         while ($selection -notmatch '^\s*[1-4]\s*$') # regex matches 1-4 but allows spaces
         {
-            Write-Host "Please enter 1-4" -ForegroundColor $script:warningColor
+            Write-Host "Please enter 1-4." -ForegroundColor $script:warningColor
             $selection = Read-Host
         }
 
@@ -131,7 +129,7 @@ class GotoWizard
         $uri = $uri + "?filter=$emailQuery"
 
         $response = SafelyInvoke-RestMethod -Method $method -Uri $uri -Headers $headers
-        return $response.results
+        return $response.results[0]
     }
 
     ShowUserInfo()
@@ -143,6 +141,8 @@ class GotoWizard
 
     [string] GetUserRole()
     {
+        $this.gotoUser = $this.GetUser()
+        
         # Check for a built-in (system) admin role.
         if ($this.gotoUser.adminRoles)
         {
@@ -160,7 +160,7 @@ class GotoWizard
         # Check for a custom role.
         if ($this.gotoUser.roleSets)
         {
-            return $this.allCustomRoles[$this.gotoUser.roleSets]
+            return $this.allCustomRoles[$this.gotoUser.roleSets[0]]
         }
 
         # If they have no built-in (system) admin role or custom role, their role is simply "Member".
@@ -188,7 +188,7 @@ class GotoWizard
 
     [int] PromptRoleToAssign()
     {
-        $menuText = ("Select a role to assign.`n`n" +
+        $menuText = ("Select a role to assign:`n" +
             "[1] Super Admin`n" +
             "[2] Admin (Configure PBX)`n" +
             "[3] Member`n")
@@ -196,15 +196,16 @@ class GotoWizard
         $optionsCount = 3
         foreach ($roleName in $this.allCustomRoles.Values)
         {
-            $menuText = $menuText + "[$optionsCount] $roleName`n"
             $optionsCount++
+            $menuText = $menuText + "[$optionsCount] $roleName`n"            
         }
 
         $selection = Read-Host $menuText
 
         while ($selection -notmatch "^\s*[1-$optionsCount]\s*$") # regex matches 1 - optionsCount but allows spaces
         {
-            $selection = Read-Host "Please enter 1-$optionsCount"
+            Write-Host "Please enter 1-$optionsCount." -ForegroundColor $script:warningColor
+            $selection = Read-Host
         }
 
         return [int]$selection.Trim()
@@ -212,30 +213,39 @@ class GotoWizard
 
     AssignUserRole($roleSelection)
     {
+        # Need to refresh the user's info here because the method of assigning a new role depends on their current one.
+        $this.gotoUser = $this.GetUser()
+        
         $method = "Put"
         $uri = ""
         $headers = @{
             "Authorization" = "Bearer $($this.accessToken)"
+            "Content-Type" = "application/json"
         }
         $body = @{}
+        $newRoleName = ""
 
         switch ($roleSelection)
         {
-            1 # selection is Super Admin
+            1 # roleSelection is Super Admin
             {
                 $uri = "https://api.getgo.com/admin/rest/v1/accounts/$($this.accountKey)/users/$($this.gotoUser.key)"
                 $body = @{
                     "adminRoles" = @("SUPER_USER")
                 }
+                $newRoleName = "Super Admin"
+                break
             }
-            2 # selection is Admin (Configure PBX)
+            2 # roleSelection is Admin (Configure PBX)
             {
                 $uri = "https://api.getgo.com/admin/rest/v1/accounts/$($this.accountKey)/users/$($this.gotoUser.key)"
                 $body = @{
                     "adminRoles" = @("MANAGE_ACCOUNT")
                 }
+                $newRoleName = "Admin (Configure PBX)"
+                break
             }
-            3 # selection is member
+            3 # roleSelection is member
             {
                 if ($this.gotoUser.adminRoles) # user has a built-in (system) admin role that must be removed
                 {
@@ -252,6 +262,13 @@ class GotoWizard
                     $emailQuery = UriEncode-QueryParam $emailQuery
                     $uri = $uri + "?filter=$emailQuery"
                 }
+                else
+                {
+                    Write-Host "User is already a member!" -ForegroundColor $script:successColor
+                    return
+                }
+                $newRoleName = "Member"
+                break
             }
             {$_ -ge 4} # roleSelection is >= 4 and therefore a custom role
             {
@@ -260,10 +277,13 @@ class GotoWizard
                 $emailQuery = "email eq `"$($this.gotoUser.email)`""
                 $emailQuery = UriEncode-QueryParam $emailQuery
                 $uri = $uri + "?filter=$emailQuery"
+                $newRoleName = $this.allCustomRoles[$roleId]
+                break
             }
         }
 
-        SafelyInvoke-RestMethod -Method $method -Uri $uri -Headers $headers -Body ($body | ConvertTo-Json)
+        $response = SafelyInvoke-RestMethod -Method $method -Uri $uri -Headers $headers -Body ($body | ConvertTo-Json)
+        if ($response) { Write-Host "Assigned role: $newRoleName`n" -ForegroundColor $script:successColor }        
     }
 
     DisplayLinkToOutboundCallerId()

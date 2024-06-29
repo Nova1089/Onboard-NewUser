@@ -171,6 +171,11 @@ function Get-M365User($upn)
     return $user
 }
 
+function Start-M365UserWizard
+{
+    
+}
+
 function Get-UserManager($user)
 {
     $managerId = Get-MgUserManager -UserId $user.UserPrincipalName -ErrorAction "SilentlyContinue" | Select-Object -ExpandProperty "ID"
@@ -291,7 +296,7 @@ function Prompt-MainMenu
     "[2] $(New-Checkbox($script:grantLicensesCompleted)) Manage licenses`n" +
     "[3] $(New-Checkbox($script:assignGroupsCompleted)) Manage groups`n" +
     "[4] $(New-Checkbox($script:grantMailboxesCompleted)) Manage shared mailboxes`n" +
-    "[5] $(New-Checkbox($script:gotoStepCompleted)) Setup GoTo account`n" +
+    "[5] $(New-Checkbox($script:gotoSetupCompleted)) Setup GoTo account`n" +
     "[6] Finish`n")
 
     do
@@ -457,8 +462,8 @@ function Grant-License($user, $license)
     catch
     {
         $errorRecord = $_
-        Write-Host "There was an issue granting the license." -ForegroundColor $failColor
-        Write-Host $errorRecord.Exception.Message -ForegroundColor $failColor
+        Write-Host "There was an issue granting the license." -ForegroundColor $warningColor
+        Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
     }  
 }
 
@@ -507,8 +512,8 @@ function Revoke-License($user, $license)
     catch
     {
         $errorRecord = $_
-        Write-Host "There was an issue revoking the license." -ForegroundColor $failColor
-        Write-Host $errorRecord.Exception.Message -ForegroundColor $failColor
+        Write-Host "There was an issue revoking the license." -ForegroundColor $warningColor
+        Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
     } 
 }
 
@@ -729,7 +734,7 @@ function Start-MailboxWizard($user)
                 $script:grantMailboxesCompleted = $true
                 break
             }
-            3 # Revoke access to mailboxe
+            3 # Revoke access to mailbox
             {
                 do
                 {
@@ -903,10 +908,14 @@ function SafelyInvoke-RestMethod($method, $uri, $headers, $body)
     catch
     {
         Write-Host $responseError[0].Message -ForegroundColor $warningColor
-        return
+        return $false # Wasn't successful.
     }
 
-    return $response
+    if ($response)
+    {
+        return $response
+    }
+    return $true # Was successful.
 }
 
 function New-Checkbox($checked)

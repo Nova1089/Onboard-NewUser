@@ -21,21 +21,34 @@ Use-Module "Microsoft.Powershell.SecretManagement"
 Use-Module "PSAuthClient" # Docs for this module found here https://github.com/alflokken/PSAuthClient
 TryConnect-MgGraph -Scopes @("User.ReadWrite.All", "Group.ReadWrite.All", "Organization.Read.All")
 TryConnect-ExchangeOnline
-$upn = Prompt-UPN
-$user = Get-M365User $upn
-if ($null -ne $user)
+
+do
 {
-    $manager = Get-UserManager $user 
-    $licenses = Get-UserLicenses $user 
-    $groups = Get-UserGroups $user
-    $adminRoles = Get-UserAdminRoles $user
-    Show-UserProperties -User $user -Manager $manager -Licenses $licenses -Groups $groups -AdminRoles $adminRoles
+    $upn = Prompt-UPN
+    $user = Get-M365User $upn
+
+    if ($null -eq $user)
+    {
+        $createUser = Prompt-YesOrNo "Create this user in M365?"
+        if ($createUser)
+        {
+            $user = Start-M365UserWizard
+        }
+    }
 }
+while ($null -eq $user)
+
+$manager = Get-UserManager $user 
+$licenses = Get-UserLicenses $user 
+$groups = Get-UserGroups $user
+$adminRoles = Get-UserAdminRoles $user
+Show-UserProperties -User $user -Manager $manager -Licenses $licenses -Groups $groups -AdminRoles $adminRoles
+
 
 $script:grantLicensesCompleted = $false
 $script:assignGroupsCompleted = $false
 $script:grantMailboxesCompleted = $false
-$script:gotoStepCompleted = $false
+$script:gotoSetupCompleted = $false
 
 $keepGoing = $true
 while ($keepGoing)
@@ -73,8 +86,6 @@ while ($keepGoing)
         }
         5 # Setup GoTo account
         {
-            $script:gotoStepCompleted = $true
-            Write-Host "About to call constructor"
             $gotoWizard = [GotoWizard]::New($upn)
             $gotoWizard.Start()
             break
