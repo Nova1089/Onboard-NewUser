@@ -113,34 +113,19 @@ function TryConnect-ExchangeOnline
     }
 }
 
-function Prompt-UPN
+function Test-ValidBrsEmail($email)
 {
-    $upn = Read-Host "Enter the UPN for the user (PreferredFirst.Last@blueravensolar.com)"
-    $isValidEmail = Validate-BrsEmail $upn
-    while (-not($isValidEmail))
-    {
-        $upn = Read-Host "Enter the UPN for the user"
-        $isValidEmail = Validate-BrsEmail $upn
-    }
-
-    return $upn.Trim()
-}
-
-function Validate-BrsEmail($email)
-{
-    $isBrsEmail = $email -match '^\s*\S+@blueravensolar.com\s*$'
-
+    $isBrsEmail = $email -imatch '^\S+@blueravensolar.com$'
     if (-not($isBrsEmail))
     {
-        Write-Warning "Email needs to end in @blueravensolar.com"
+        Write-Host "Email can't have spaces and needs to end in @blueravensolar.com." -ForegroundColor $warningColor
         return $false
     }
 
-    $isStandard = $email -imatch '^\s*[\w-]+\.[\w-]+(@blueravensolar\.com)\s*$'    
-    
+    $isStandard = $email -imatch '^[\w-]+\.[\w-]+(@blueravensolar\.com)$'    
     if (-not($isStandard))
     {
-        Write-Warning "Email is not standard (PreferredFirstName.LastName@blueravensolar.com)"
+        Write-Host "Email is not standard (First.Last@blueravensolar.com)" -ForegroundColor $warningColor
         $continue = Prompt-YesOrNo "Are you sure you want to use this email?"
         if (-not($continue)) { return $false }
     }
@@ -148,39 +133,151 @@ function Validate-BrsEmail($email)
     return $true
 }
 
-function Get-M365User($upn)
+function Get-M365User($upn, [switch]$detailed)
 {
     if ($null -eq $upn) { throw "Can't get M365 user. UPN is null." }
-    
-    $user = (Get-MgUser -UserID $upn -Property @("CreatedDateTime", 
+
+    try
+    {
+        if ($detailed)
+        {
+            $user = (Get-MgUser -UserID $upn -Property @("CreatedDateTime", 
                                                 "DisplayName", 
                                                 "UserPrincipalName",   
                                                 "JobTitle", 
                                                 "Department", 
                                                 "UsageLocation", 
                                                 "LicenseDetails",
-                                                "Id") -ErrorAction "SilentlyContinue")
-    if ($null -eq $user)
-    {
-        Write-Host "User does not exist yet." -ForegroundColor $infoColor
+                                                "Id") -ErrorAction "Stop")            
+        }
+        else
+        {
+            $user = Get-MgUser -UserID $upn -ErrorAction "Stop"
+        }
+        Write-Host "User found!" -ForegroundColor $successColor     
     }
-    else
-    {   
-        Write-Host "User found!" -ForegroundColor $successColor
-    }    
+    catch
+    {
+        $errorRecord = $_
+        if ($errorRecord.Exception.Message -ilike "*[Request_ResourceNotFound]*")
+        {
+            Write-Warning "User not found."
+            return
+        }
+        Write-Host "There was an issue getting the user." -ForegroundColor $warningColor
+        Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
+    }
     return $user
 }
 
-function Start-M365UserWizard
+function Start-M365UserWizard($upn)
 {
+    # Display Name
+    # UPN
+    # Title
+    # Department
+    # Manager
+    # Usage Location
+    $displayName = Convert-EmailToDisplayName $upn
+    $jobTitle = Read-Host "Enter job title"
+    $department = Read-Host "Enter department"
+    do
+    {
+        $managerUpn = Prompt-BrsEmail "Enter manager UPN"
+        $manager = Get-M365User -UPN $managerUpn
+    }
+    while ($null -eq $manager)
+
+}
+
+function New-M365User($upn, $displayName, $jobTitle, $department)
+{
+    $passwordProfile = @{
+        "password" = Get-TempPassword
+    }
     
+    try
+    {
+        New-Mguser -UserPrincipalName $upn -DisplayName $displayName -JobTitle $jobTitle -Department $department
+    }
+    catch
+    {
+        $errorRecord = $_
+        Write-Host "There was an issue creating user." -ForegroundColor $warningColor
+        Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
+    }
+}
+
+function Get-TempPassword
+{
+    $words = @("red", "orange", "yellow", "green", "blue", "purple", "pink", "black", "white", "brown", "silver", "gold",
+        "spring", "summer", "autumn", "winter", "ocean", "lake", "river", "mountain", "valley", "rain", "thunder", "lightning", 
+        "snow", "wind", "storm", "lion", "tiger", "bear", "mouse", "bug", "bunny", "shark", "bird", "sun", "moon", "comet",
+        "emerald", "ruby", "diamond", "jasper", "amber", "obsidian", "saphire", "jade", "journey", "voyage", "adventure", "quest")
+    $specialChars = @('!', '@', '#', '$', '%', '^', '&', '*', '-', '+', '=', '?')
+
+    $word1 = $words | Get-Random
+    $coinFlip = Get-Random -Maximum 2 # max exclusive
+    if ($coinFlip -eq 1) { $word1 = $word1.ToUpper() }
+    
+    $word2 = $words | Get-Random
+    $coinFlip = Get-Random -Maximum 2 # max exclusive
+    if ($coinFlip -eq 1) { $word2 = $word2.ToUpper() }
+
+    $word3 = $words | Get-Random
+    $coinFlip = Get-Random -Maximum 2 # max exclusive
+    if ($coinFlip -eq 1) { $word3 = $word3.ToUpper() }
+
+    $specialChar = $specialChars | Get-Random
+    $num = Get-Random -Maximum 100 # max exclusive
+    return $word1 + '/' + $word2 + '/' + $word3 + '/' + $specialChar + $num
+}
+
+function Convert-EmailToDisplayName($email)
+{
+    $fullName = $email.Split('@')[0]
+    $nameParts = $fullName.Split('.')
+    $displayName = ""
+    foreach($name in $nameParts)
+    {
+        $displayName += (Capitalize-FirstLetter $name) + " "
+    }
+    return $displayName.Trim()
+}
+
+function Capitalize-FirstLetter($string)
+{
+    return $string.substring(0,1).ToUpper() + $string.substring(1)
+}
+
+function Set-UserManager($user)
+{
+    $myId = "fe4b7e05-b87a-4566-a3f9-a54fc6fca37a"
+    $myOdata = "https://graph.microsoft.com/v1.0/users/fe4b7e05-b87a-4566-a3f9-a54fc6fca37a"
+    Set-MgUserManagerByRef -UserId $user.Id -OdataId 
 }
 
 function Get-UserManager($user)
 {
-    $managerId = Get-MgUserManager -UserId $user.UserPrincipalName -ErrorAction "SilentlyContinue" | Select-Object -ExpandProperty "ID"
-    if ($null -eq $managerId) { return $null }
-    return Get-MgUser -UserId $managerId | Select-Object -ExpandProperty "DisplayName"
+    try
+    {
+        $manager = Get-MgUserManager -UserId $user.UserPrincipalName -ErrorAction "Stop"
+    }
+    catch
+    {
+        if ($errorRecord.Exception.Message -ilike "*[Request_ResourceNotFound]*")
+        {
+            return
+        }
+        $errorRecord = $_
+        Write-Host "There was an issue getting user's manager." -ForegroundColor $warningColor
+        Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
+        return
+    }
+    
+    if ($null -eq $managerId) { return }
+    # Returns a dictionary.
+    return $manager.AdditionalProperties
 }
 
 function Get-UserLicenses($user)
@@ -213,9 +310,19 @@ function Get-UserLicenses($user)
         }
     }
 
-    $licenseDetails = Get-MGUserLicenseDetail -UserId $user.UserPrincipalName
+    try
+    {
+        $licenseDetails = Get-MGUserLicenseDetail -UserId $user.UserPrincipalName
+    }
+    catch
+    {
+        $errorRecord = $_
+        Write-Host "There was an issue getting user's licenses." -ForegroundColor $warningColor
+        Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
+        return
+    }
+    
     $licenses = New-Object System.Collections.Generic.List[object]
-
     foreach ($license in $licenseDetails)
     {
         $licenseName = $script:licenseLookupTable[$license.SkuId]
@@ -227,12 +334,32 @@ function Get-UserLicenses($user)
 
 function Get-UserGroups($user)
 {
-    return Get-MgUserMemberOfAsGroup -UserId $user.UserPrincipalName
+    try
+    {
+        $groups = Get-MgUserMemberOfAsGroup -UserId $user.UserPrincipalName -ErrorAction "Stop"
+    }
+    catch
+    {
+        $errorRecord = $_
+        Write-Host "There was an issue getting user's groups." -ForegroundColor $warningColor
+        Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
+    }
+    return $groups
 }
 
 function Get-UserAdminRoles($user)
 {
-    return Get-MgUserMemberOfAsDirectoryRole -UserId $user.UserPrincipalName
+    try
+    {
+        $adminRoles = Get-MgUserMemberOfAsDirectoryRole -UserId $user.UserPrincipalName -ErrorAction "Stop"
+    }
+    catch
+    {
+        $errorRecord = $_
+        Write-Host "There was an issue getting user's admin roles." -ForegroundColor $warningColor
+        Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
+    }
+    return $adminRoles
 }
 
 function Show-UserProperties($user, $manager, $licenses, $groups, $adminRoles)
@@ -243,7 +370,7 @@ function Show-UserProperties($user, $manager, $licenses, $groups, $adminRoles)
         "UPN"               = $user.UserPrincipalName
         "Title"             = $user.JobTitle
         "Department"        = $user.Department
-        "Manager"           = $manager
+        "Manager"           = $manager.displayName
         "Usage Location"    = $user.UsageLocation
     }
     $basicProps | Out-Host
@@ -313,24 +440,18 @@ function Prompt-MainMenu
     return $selection.Trim()
 }
 
-function Prompt-BrsEmail
+function Prompt-BrsEmail($message)
 {
-    param
-    (
-        [ValidateSet("group", "mailbox", IgnoreCase = $false)]
-        $emailType
-    )
-
     do
     {
-        $email = Read-Host "`nEnter $emailType email (you may omit the @blueravensolar.com)"
+        $email = Read-Host "`n$message (you may omit the @blueravensolar.com)"
     }
     while ($null -eq $email)
 
     $email = $email.Trim()
-    $isStandardFormat = $email -imatch '^\S+@blueravensolar.com$'
+    $hasDomain = $email -imatch '^\S+@blueravensolar.com$'
 
-    if (-not($isStandardFormat))
+    if (-not($hasDomain))
     {
         $email += '@blueravensolar.com'
     }
@@ -559,7 +680,7 @@ function Start-M365GroupWizard($user)
             {
                 do
                 {
-                    $groupEmail = Prompt-BRSEmail -EmailType "group"
+                    $groupEmail = Prompt-BrsEmail "Enter group email"
                     $group = Get-M365Group $groupEmail
                     if ($null -eq $group)
                     {
@@ -587,7 +708,7 @@ function Start-M365GroupWizard($user)
             {
                 do
                 {
-                    $groupEmail = Prompt-BRSEmail -EmailType "group"
+                    $groupEmail = Prompt-BrsEmail "Enter group email"
                     $group = Get-M365Group $groupEmail
                     if ($null -eq $group)
                     {
@@ -642,16 +763,28 @@ function Prompt-GroupMenu
 
 function Get-M365Group($email)
 {
-    $group = Get-MgGroup -Filter "mail eq '$email'" -ErrorAction "SilentlyContinue"
+    try
+    {
+        $group = Get-MgGroup -Filter "mail eq '$email'" -ErrorAction "Stop"
+    }
+    catch
+    {
+        if ($errorRecord.Exception.Message -ilike "*[Request_ResourceNotFound]*")
+        {
+            Write-Host "Group not found." -ForegroundColor $warningColor
+            return
+        }
+        $errorRecord = $_
+        Write-Host "There was an issue getting the group." -ForegroundColor $warningColor
+        Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
+    }
+
     if ($group)
     {
         Write-Host "Found Group!" -ForegroundColor $successColor
         $group | Select-Object -Property @("DisplayName", "Mail", "Description") | Out-Host        
     }
-    else
-    {
-        Write-Host "Group not found." -ForegroundColor $warningColor
-    }
+
     return $group
 }
 
@@ -719,7 +852,7 @@ function Start-MailboxWizard($user)
             {
                 do
                 {
-                    $mailboxUpn = Prompt-BRSEmail -EmailType "mailbox"
+                    $mailboxUpn = Prompt-BrsEmail "Enter mailbox email"
                     $mailbox = Get-SharedMailbox $mailboxUpn
                     if ($null -eq $mailbox)
                     {
@@ -738,7 +871,7 @@ function Start-MailboxWizard($user)
             {
                 do
                 {
-                    $mailboxUpn = Prompt-BRSEmail -EmailType "mailbox"
+                    $mailboxUpn = Prompt-BrsEmail "Enter mailbox email"
                     $mailbox = Get-SharedMailbox $mailboxUpn
                     if ($null -eq $mailbox)
                     {

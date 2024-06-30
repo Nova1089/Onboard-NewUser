@@ -24,15 +24,18 @@ TryConnect-ExchangeOnline
 
 do
 {
-    $upn = Prompt-UPN
-    $user = Get-M365User $upn
+    $upn = Prompt-BrsEmail "Enter user UPN"
+    $isValidEmail = Test-ValidBrsEmail $upn
+    if (-not($isValidEmail)) { continue }
+    $user = Get-M365User -UPN $upn -Detailed -WarningAction "SilentlyContinue"
 
     if ($null -eq $user)
     {
+        Write-Host "User does not exist yet." -ForegroundColor $infoColor
         $createUser = Prompt-YesOrNo "Create this user in M365?"
         if ($createUser)
         {
-            $user = Start-M365UserWizard
+            $user = Start-M365UserWizard $upn
         }
     }
 }
