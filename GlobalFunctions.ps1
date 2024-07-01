@@ -133,22 +133,26 @@ function Test-ValidBrsEmail($email)
     return $true
 }
 
-function Get-M365User($upn, [switch]$detailed)
+function Get-M365User
 {
+    [CmdletBinding()]
+    Param($upn, [switch]$detailed)
+    
     if ($null -eq $upn) { throw "Can't get M365 user. UPN is null." }
 
     try
     {
         if ($detailed)
         {
-            $user = (Get-MgUser -UserID $upn -Property @("CreatedDateTime", 
-                                                "DisplayName", 
-                                                "UserPrincipalName",   
-                                                "JobTitle", 
-                                                "Department", 
-                                                "UsageLocation", 
-                                                "LicenseDetails",
-                                                "Id") -ErrorAction "Stop")            
+            $user = (Get-MgUser -UserID $upn -Property @(
+                    "CreatedDateTime", 
+                    "DisplayName", 
+                    "UserPrincipalName",   
+                    "JobTitle", 
+                    "Department", 
+                    "UsageLocation", 
+                    "LicenseDetails",
+                    "Id") -ErrorAction "Stop")            
         }
         else
         {
@@ -172,13 +176,16 @@ function Get-M365User($upn, [switch]$detailed)
 
 function Start-M365UserWizard($upn)
 {
-    # Display Name
-    # UPN
-    # Title
-    # Department
-    # Manager
-    # Usage Location
-    $displayName = Convert-EmailToDisplayName $upn
+    $emailParts = Get-EmailParts $upn
+    $correct = Prompt-YesOrNo "This preferred first name?: $($emailParts.FirstName)"
+    if (-not($correct)) { $emailParts.FirstName = Read-Host "Enter preferred first name" }
+
+    $correct = Prompt-YesOrNo "This last name?: $($emailParts.LastName)"
+    if (-not($correct)) { $emailParts.LastName = Read-Host "Enter last name" }
+
+    $correct = Prompt-YesOrNo "This display name?: $($emailParts.DisplayName)"
+    if (-not($correct)) { $emailParts.DisplayName = Read-Host "Enter display name" }
+
     $jobTitle = Read-Host "Enter job title"
     $department = Read-Host "Enter department"
     do
@@ -188,17 +195,47 @@ function Start-M365UserWizard($upn)
     }
     while ($null -eq $manager)
 
+    $params = @{
+        "UPN" = $upn
+        "MailNickName" = $emailParts.MailNickName
+        "DisplayName"  = $emailParts.DisplayName
+        "FirstName" = $emailParts.FirstName
+        "LastName" = $emailParts.LastName
+        "JobTitle" = $jobTitle
+        "Department" = $department
+        "UsageLocation" = "US" # We always set this to US, even for those out-of-country.
+    }
+
+    $user = New-M365User @params
+    Set-UserManager -User $user -Manager $manager
+    return $user
 }
 
-function New-M365User($upn, $displayName, $jobTitle, $department)
+function New-M365User($upn, $mailNickName, $displayName, $firstName, $lastName, $jobTitle, $department, $usageLocation)
 {
+    $tempPassword = Get-TempPassword
+    Write-Host "Temp Password: $tempPassword" -ForegroundColor $infoColor
     $passwordProfile = @{
         "password" = Get-TempPassword
+        "forceChangePasswordNextSignInWithMfa" = $true
+    }
+
+    $params = @{
+        "UserPrincipalName" = $upn
+        "MailNickName"      = $mailNickName
+        "DisplayName" = $displayName
+        "GivenName" = $firstName
+        "Surname"  = $lastName
+        "JobTitle" = $jobTitle
+        "Department" = $department
+        "UsageLocation" = $usageLocation
+        "PasswordProfile" = $passwordProfile
+        "AccountEnabled" = $true
     }
     
     try
     {
-        New-Mguser -UserPrincipalName $upn -DisplayName $displayName -JobTitle $jobTitle -Department $department
+        $user = New-Mguser @params
     }
     catch
     {
@@ -206,14 +243,15 @@ function New-M365User($upn, $displayName, $jobTitle, $department)
         Write-Host "There was an issue creating user." -ForegroundColor $warningColor
         Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
     }
+    return $user
 }
 
 function Get-TempPassword
 {
-    $words = @("red", "orange", "yellow", "green", "blue", "purple", "pink", "black", "white", "brown", "silver", "gold",
-        "spring", "summer", "autumn", "winter", "ocean", "lake", "river", "mountain", "valley", "rain", "thunder", "lightning", 
-        "snow", "wind", "storm", "lion", "tiger", "bear", "mouse", "bug", "bunny", "shark", "bird", "sun", "moon", "comet",
-        "emerald", "ruby", "diamond", "jasper", "amber", "obsidian", "saphire", "jade", "journey", "voyage", "adventure", "quest")
+    $words = @("red", "orange", "yellow", "green", "blue", "purple", "silver", "gold", "flower", "mushroom", "spring", "summer",
+        "autumn", "winter", "ocean", "lake", "river", "mountain", "valley", "jungle", "cavern", "rain", "thunder", "lightning",
+        "storm", "fire", "lion", "wolf", "bear", "shark", "hawk", "dragon", "goblin", "sun", "moon", "emerald", "ruby", "saphire", 
+        "treasure", "journey", "voyage", "adventure", "quest", "song", "dance", "castle", "dungeon", "sword", "arrow", "torch")
     $specialChars = @('!', '@', '#', '$', '%', '^', '&', '*', '-', '+', '=', '?')
 
     $word1 = $words | Get-Random
@@ -233,16 +271,24 @@ function Get-TempPassword
     return $word1 + '/' + $word2 + '/' + $word3 + '/' + $specialChar + $num
 }
 
-function Convert-EmailToDisplayName($email)
-{
-    $fullName = $email.Split('@')[0]
-    $nameParts = $fullName.Split('.')
+function Get-EmailParts($email)
+{    
+    $email = $email.Trim()
+    # Get the part of the email before the @ sign.
+    $mailNickName = $email.Split('@')[0]
+    $nameParts = $mailNickName.Split('.')
     $displayName = ""
-    foreach($name in $nameParts)
+    foreach ($name in $nameParts)
     {
         $displayName += (Capitalize-FirstLetter $name) + " "
     }
-    return $displayName.Trim()
+    
+    return @{
+        "FirstName" = Capitalize-FirstLetter $nameParts[0]
+        "LastName"     = Capitalize-FirstLetter $nameParts[1]
+        "DisplayName" = $displayName
+        "MailNickName" = $mailNickName
+    }
 }
 
 function Capitalize-FirstLetter($string)
@@ -250,11 +296,83 @@ function Capitalize-FirstLetter($string)
     return $string.substring(0,1).ToUpper() + $string.substring(1)
 }
 
-function Set-UserManager($user)
+function Set-UserManager($user, $manager)
 {
-    $myId = "fe4b7e05-b87a-4566-a3f9-a54fc6fca37a"
-    $myOdata = "https://graph.microsoft.com/v1.0/users/fe4b7e05-b87a-4566-a3f9-a54fc6fca37a"
-    Set-MgUserManagerByRef -UserId $user.Id -OdataId 
+    try
+    {
+        Set-MgUserManagerByRef -UserId $user.Id -OdataId "https://graph.microsoft.com/v1.0/users/$($manager.Id)" -ErrorAction "Stop" | Out-Null
+    }
+    catch
+    {
+        $errorRecord = $_
+        Write-Host "There was an issue assigning manager." -ForegroundColor $warningColor
+        Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
+    }
+    
+}
+
+function Get-UserProperties($user)
+{
+    $manager = Invoke-GetWithRetry { Get-UserManager -User $user }
+    $basicProps = [PSCustomObject]@{
+        "Created Date/Time (UTC)" = $user.CreatedDateTime
+        "Display Name"      = $user.DisplayName
+        "UPN"               = $user.UserPrincipalName
+        "Title"             = $user.JobTitle
+        "Department"        = $user.Department
+        "Manager"           = $manager.displayName
+        "Usage Location"    = $user.UsageLocation
+    }
+
+    return @{
+        "BasicProps" = $basicProps
+        "Licenses" = Get-UserLicenses $user
+        "Groups"   = Get-UserGroups $user
+        "AdminRoles" = Get-UserAdminRoles $user
+    }
+}
+
+function Invoke-GetWithRetry([ScriptBlock]$scriptBlock, $initialDelayInSeconds = 2, $maxRetries = 4)
+{
+    # API may not have the info we're trying to get yet. This will automatically retry a set amount of times.
+
+    $retryCount = 0
+    $delay = $initialDelayInSeconds
+    do
+    {
+        # The call operator (&). Invokes a script block in a new script scope.
+        # https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_operators?view=powershell-7.4#call-operator-
+        $response = & $scriptBlock
+
+        if ($null -eq $response)
+        {
+            if ($retryCount -ge 2)
+            { 
+                Write-Warning "$scriptBlock returned null. Retrying in $delay seconds..."
+                Start-SleepTimer -Seconds $delay
+            }
+            else
+            {
+                Start-Sleep -Seconds $delay
+            }            
+            $delay *= 2
+            $retryCount++
+        }
+    }
+    while (($null -eq $response) -and ($retryCount -lt $maxRetries))
+
+    if ($retryCount -ge $maxRetries) { Write-Warning "Timed out trying to get a response." }
+
+    return $response
+}
+
+function Start-SleepTimer($seconds)
+{
+    for ($i = 0; $i -lt $seconds; $i++)
+    {
+        Write-Progress -Activity "Waiting..." -Status "$i / $seconds seconds"
+        Start-Sleep -Seconds 1
+    }
 }
 
 function Get-UserManager($user)
@@ -265,17 +383,17 @@ function Get-UserManager($user)
     }
     catch
     {
+        $errorRecord = $_
         if ($errorRecord.Exception.Message -ilike "*[Request_ResourceNotFound]*")
         {
             return
-        }
-        $errorRecord = $_
+        }        
         Write-Host "There was an issue getting user's manager." -ForegroundColor $warningColor
         Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
         return
     }
     
-    if ($null -eq $managerId) { return }
+    if ($null -eq $manager) { return }
     # Returns a dictionary.
     return $manager.AdditionalProperties
 }
@@ -362,17 +480,8 @@ function Get-UserAdminRoles($user)
     return $adminRoles
 }
 
-function Show-UserProperties($user, $manager, $licenses, $groups, $adminRoles)
+function Show-UserProperties($basicProps, $licenses, $groups, $adminRoles)
 {
-    $basicProps = [PSCustomObject]@{
-        "Created Date/Time" = $user.CreatedDateTime
-        "Display Name"      = $user.DisplayName
-        "UPN"               = $user.UserPrincipalName
-        "Title"             = $user.JobTitle
-        "Department"        = $user.Department
-        "Manager"           = $manager.displayName
-        "Usage Location"    = $user.UsageLocation
-    }
     $basicProps | Out-Host
 
     Show-Separator "Licenses"
@@ -769,12 +878,12 @@ function Get-M365Group($email)
     }
     catch
     {
+        $errorRecord = $_
         if ($errorRecord.Exception.Message -ilike "*[Request_ResourceNotFound]*")
         {
             Write-Host "Group not found." -ForegroundColor $warningColor
             return
-        }
-        $errorRecord = $_
+        }        
         Write-Host "There was an issue getting the group." -ForegroundColor $warningColor
         Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
     }

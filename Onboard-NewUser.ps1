@@ -36,40 +36,31 @@ do
         if ($createUser)
         {
             $user = Start-M365UserWizard $upn
+            # Get more details about the user.
+            $user = Invoke-GetWithRetry { Get-M365User -UPN $user.UserPrincipalName -Detailed }
         }
     }
 }
 while ($null -eq $user)
-
-$manager = Get-UserManager $user 
-$licenses = Get-UserLicenses $user 
-$groups = Get-UserGroups $user
-$adminRoles = Get-UserAdminRoles $user
-Show-UserProperties -User $user -Manager $manager -Licenses $licenses -Groups $groups -AdminRoles $adminRoles
-
 
 $script:grantLicensesCompleted = $false
 $script:assignGroupsCompleted = $false
 $script:grantMailboxesCompleted = $false
 $script:gotoSetupCompleted = $false
 
+$userProps = Get-UserProperties $user
+Show-UserProperties -BasicProps $userProps.basicProps -Licenses $userProps.Licenses -Groups $userProps.Groups -AdminRoles $userProps.AdminRoles
+
 $keepGoing = $true
 while ($keepGoing)
 {
     $mainMenuSelection = Prompt-MainMenu
-
     switch ($mainMenuSelection)
     {
         1 # Show M365 user info
         {
-            if ($null -ne $user)
-            {
-                $manager = Get-UserManager $user 
-                $licenses = Get-UserLicenses $user 
-                $groups = Get-UserGroups $user
-                $adminRoles = Get-UserAdminRoles $user
-                Show-UserProperties -User $user -Manager $manager -Licenses $licenses -Groups $groups -AdminRoles $adminRoles
-            }
+            $userProps = Get-UserProperties $user
+            Show-UserProperties -BasicProps $userProps.basicProps -Licenses $userProps.Licenses -Groups $userProps.Groups -AdminRoles $userProps.AdminRoles
             break
         }
         2 # Grant licenses
