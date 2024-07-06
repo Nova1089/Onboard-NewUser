@@ -1,10 +1,10 @@
 # functions
 function Initialize-ColorScheme
 {
-    Set-Variable -Name "successColor" -Value "Green" -Scope "Script"
-    Set-Variable -Name "infoColor" -Value "DarkCyan" -Scope "Script"
-    Set-Variable -Name "warningColor" -Value "Yellow" -Scope "Script"
-    Set-Variable -Name "failColor" -Value "Red" -Scope "Script"
+    Set-Variable -Name "successColor" -Value "Green" -Scope "Script" -Option "Constant"
+    Set-Variable -Name "infoColor" -Value "DarkCyan" -Scope "Script" -Option "Constant"
+    Set-Variable -Name "warningColor" -Value "Yellow" -Scope "Script" -Option "Constant"
+    Set-Variable -Name "failColor" -Value "Red" -Scope "Script" -Option "Constant"
 }
 
 function Show-Introduction
@@ -135,6 +135,7 @@ function Test-ValidBrsEmail($email)
 
 function Get-M365User
 {
+    # Needs cmdlet binding to gain WarningAction param.
     [CmdletBinding()]
     Param($upn, [switch]$detailed)
     
@@ -248,10 +249,10 @@ function New-M365User($upn, $mailNickName, $displayName, $firstName, $lastName, 
 
 function Get-TempPassword
 {
-    $words = @("red", "orange", "yellow", "green", "blue", "purple", "silver", "gold", "flower", "mushroom", "spring", "summer",
-        "autumn", "winter", "ocean", "lake", "river", "mountain", "valley", "jungle", "cavern", "rain", "thunder", "lightning",
-        "storm", "fire", "lion", "wolf", "bear", "shark", "hawk", "dragon", "goblin", "sun", "moon", "emerald", "ruby", "saphire", 
-        "treasure", "journey", "voyage", "adventure", "quest", "song", "dance", "castle", "dungeon", "sword", "arrow", "torch")
+    $words = @("red", "orange", "yellow", "green", "blue", "purple", "silver", "gold", "flower", "mushroom", "lake", "river",
+        "mountain", "valley", "jungle", "cavern", "rain", "thunder", "lightning", "storm", "fire", "lion", "wolf", "bear", "hawk",
+        "dragon", "goblin", "fairy", "wizard", "sun", "moon", "emerald", "ruby", "saphire", "diamond", "treasure", "journey", "voyage",
+        "adventure", "quest", "song", "dance", "painting", "magic", "castle", "dungeon", "tower", "sword", "torch", "potion")
     $specialChars = @('!', '@', '#', '$', '%', '^', '&', '*', '-', '+', '=', '?')
 
     $word1 = $words | Get-Random
@@ -1167,6 +1168,92 @@ function New-Checkbox($checked)
         return "[X]"
     }
     return "[ ]"
+}
+
+class Logger
+{
+    # Implementing logger as a singleton. Meaning there should only be one instance in the program!
+
+    # Can't make the constructor private, so we'll just hide it.
+    hidden Logger()
+    { 
+        $this.logs = New-Object System.Collections.Generic.List[object]
+    }
+
+    # Can't make this field private or readonly, but we can hide it.
+    hidden static [Logger] $instance
+
+    # This is how you're supposed to instantiate the logger.
+    static [Logger] GetInstance()
+    {
+        if ($null -eq [Logger]::instance)
+        {
+            [Logger]::instance = [Logger]::new()
+        }
+        return [Logger]::instance
+    }    
+    
+    # fields
+    hidden [System.Collections.Generic.List[object]] $logs
+
+    # methods
+    [void] LogChange($message)
+    {
+        $logEntry = [PSCustomObject]@{
+            Timestamp = Get-Date
+            Level = 'Change'
+            Message = $message
+        }
+        $this.logs.Add($logEntry)
+    }
+
+    [void] LogWarning($message)
+    {
+        $logEntry = [PSCustomObject]@{
+            Timestamp = Get-Date
+            Level     = 'Warning'
+            Message   = $message
+        }
+        $this.logs.Add($logEntry)
+    }
+
+    [void] LogError($message)
+    {
+        $logEntry = [PSCustomObject]@{
+            Timestamp = Get-Date
+            Level     = 'Error'
+            Message   = $message
+        }
+        $this.logs.Add($logEntry)
+    }
+
+    [void] ShowLogs()
+    {
+        $this.Logs = $this.Logs | Sort-Object TimeStamp
+        foreach ($log in $this.Logs)
+        {
+            # Pipe to Get-Date for a simplified timestamp.
+            $message = "[$($log.Timestamp | Get-Date -Format 'yyyy-mm-dd a\t hh:mm tt')] $($log.Message)"
+            switch ($log.Level)
+            {
+                'Change' 
+                {
+                    Write-Host $message -ForegroundColor $script:successColor
+                    break
+                }
+                'Warning' 
+                { 
+                    Write-Host $message -ForegroundColor $script:warningColor 
+                    break
+                }
+                'Error' 
+                { 
+                    Write-Host $message -ForegroundColor $script:failColor
+                    break
+                }
+            }
+        }
+    }
 }
 
 # Initialize script scoped variables

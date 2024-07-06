@@ -3,7 +3,7 @@
 
 class GotoWizard
 {
-    # properties
+    # fields
     [string] $upn
     [object] $gotoSecret
     [string] $clientId
@@ -32,7 +32,7 @@ class GotoWizard
     GotoWizard(){}
 
     # methods
-    Start()
+    [void] Start()
     {
         if ($null -eq $this.gotoUser)
         {
@@ -132,7 +132,7 @@ class GotoWizard
         return $response.results[0]
     }
 
-    ShowUserInfo()
+    [void] ShowUserInfo()
     {
         $role = $this.GetUserRole()
         # I'd also show their external caller ID, but this is not accessible from the public API.
@@ -211,7 +211,7 @@ class GotoWizard
         return [int]$selection.Trim()
     }
 
-    AssignUserRole($roleSelection)
+    [void] AssignUserRole($roleSelection)
     {
         # Need to refresh the user's info here because the method of assigning a new role depends on their current one.
         $this.gotoUser = $this.GetUser()
@@ -286,7 +286,7 @@ class GotoWizard
         if ($response) { Write-Host "Assigned role: $newRoleName`n" -ForegroundColor $script:successColor }        
     }
 
-    DisplayLinkToOutboundCallerId()
+    [void] DisplayLinkToOutboundCallerId()
     {
         $line = $this.GetLine()
         Write-Host "At this time the GoTo API can't change the outbound caller ID. You'll need to change it here:" -ForegroundColor $script:infoColor
