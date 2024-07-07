@@ -226,7 +226,7 @@ function New-M365User($upn, $mailNickName, $displayName, $firstName, $lastName, 
     $tempPassword = Get-TempPassword
     Write-Host "Temp Password: $tempPassword" -ForegroundColor $infoColor
     $passwordProfile = @{
-        "password"                             = Get-TempPassword
+        "password"                             = $tempPassword
         "forceChangePasswordNextSignInWithMfa" = $true
     }
 
@@ -253,6 +253,9 @@ function New-M365User($upn, $mailNickName, $displayName, $firstName, $lastName, 
         Write-Host "There was an issue creating user." -ForegroundColor $warningColor
         Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
     }
+
+    if ($user) { $script:logger.LogChange("M365 user created with UPN: $upn. Temp PW: $tempPassword") }
+
     return $user
 }
 
@@ -317,8 +320,8 @@ function Set-UserManager($user, $manager)
         $errorRecord = $_
         Write-Host "There was an issue assigning manager." -ForegroundColor $warningColor
         Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
+        $script:logger.LogWarning("There was an issue assigning manager in M365: $($manager.UserPrincipalName)")
     }
-    
 }
 
 function Get-UserProperties($user)
@@ -416,11 +419,16 @@ function Get-UserLicenses($user)
             "8f0c5670-4e56-4892-b06d-91c085d7004f" = "App Connect IW"
             "4b9405b0-7788-4568-add1-99614e613b69" = "Exchange Online (Plan 1)"
             "19ec0d23-8335-4cbd-94ac-6050e30712fa" = "Exchange Online (Plan 2)"
+            "efccb6f7-5641-4e0e-bd10-b4976e1bf68e" = "Enterprise Mobility + Security E3"
+            "b05e124f-c7cc-45a0-a6aa-8cf78c946968" = "Enterprise Mobility + Security E5"
+            "c2273bd0-dff7-4215-9ef5-2c7bcfb06425" = "Microsoft 365 Apps for Enterprise"
             "3b555118-da6a-4418-894f-7df1e2096870" = "Microsoft 365 Business Basic"
             "cbdc14ab-d96c-4c30-b9f4-6ada7cdc1d46" = "Microsoft 365 Business Premium"
             "f245ecc8-75af-4f8e-b61f-27d8114de5f3" = "Microsoft 365 Business Standard"
             "05e9a617-0261-4cee-bb44-138d3ef5d965" = "Microsoft 365 E3"
             "06ebc4ee-1bb5-47dd-8120-11324bc54e06" = "Microsoft 365 E5"
+            "44575883-256e-4a79-9da4-ebe9acabe2b2" = "Microsoft 365 F1"
+            "66b55226-6b4f-492c-910c-a3b7a3c9d993" = "Microsoft 365 F3"
             "4ef96642-f096-40de-a3e9-d83fb2f90211" = "Microsoft Defender for Office 365 (Plan 1)"
             "3dd6cf57-d688-4eed-ba52-9e40b5468c3e" = "Microsoft Defender for Office 365 (Plan 2)"
             "a403ebcc-fae0-4ca2-8c8c-7a907fd6c235" = "Microsoft Fabric (Free)"
@@ -539,10 +547,10 @@ function Prompt-MainMenu
 {
     $selection = Read-Host ("`nWhat next?`n" +
         "[1] Show M365 User Info`n" +
-        "[2] $(New-Checkbox($script:grantLicensesCompleted)) Manage licenses`n" +
-        "[3] $(New-Checkbox($script:assignGroupsCompleted)) Manage groups`n" +
-        "[4] $(New-Checkbox($script:grantMailboxesCompleted)) Manage shared mailboxes`n" +
-        "[5] $(New-Checkbox($script:gotoSetupCompleted)) Setup GoTo account`n" +
+        "[2] $(New-Checkbox $script:grantLicensesCompleted) Manage licenses`n" +
+        "[3] $(New-Checkbox $script:assignGroupsCompleted) Manage groups`n" +
+        "[4] $(New-Checkbox $script:grantMailboxesCompleted) Manage shared mailboxes`n" +
+        "[5] $(New-Checkbox $script:gotoSetupCompleted) Setup GoTo account`n" +
         "[6] Finish`n")
 
     do
@@ -666,7 +674,8 @@ function Get-AvailableLicenses
 
 function Prompt-LicenseToGrant($availableLicenses)
 {
-    $option = 0
+    # Display available licenses with an option number next to each.
+    $option = 0    
     $availableLicenses | Sort-Object -Property "Name" | ForEach-Object { $option++; $_ | Add-Member -NotePropertyName "Option" -NotePropertyValue $option }
     $availableLicenses | Sort-Object -Property "Option" | Format-Table -Property @("Option", "Name", "Available", "Purchased") | Out-Host
 
@@ -698,12 +707,14 @@ function Grant-License($user, $license)
     {
         Set-MgUserLicense -UserId $user.Id -AddLicenses @{SkuId = $license.SkuId } -RemoveLicenses @() -ErrorAction "Stop" | Out-Null
         Write-Host "License granted: $($license.name)" -ForegroundColor $successColor
+        $script:logger.LogChange("Granted M365 license: $($license.name)")
     }
     catch
     {
         $errorRecord = $_
         Write-Host "There was an issue granting the license." -ForegroundColor $warningColor
         Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
+        $script:logger.LogWarning("There was an issue granting M365 license: $($license.name)")
     }  
 }
 
@@ -739,7 +750,6 @@ function Prompt-LicenseToRevoke($assignedLicenses)
             return $license
         }
     }
-    return $null
 }
 
 function Revoke-License($user, $license)
@@ -748,12 +758,14 @@ function Revoke-License($user, $license)
     {
         Set-MgUserLicense -UserId $user.Id -AddLicenses @() -RemoveLicenses @($license.SkuId) -ErrorAction "Stop" | Out-Null
         Write-Host "License revoked: $($license.name)" -ForegroundColor $successColor
+        $script:logger.LogChange("Revoked M365 license: $($license.name)")
     }
     catch
     {
         $errorRecord = $_
         Write-Host "There was an issue revoking the license." -ForegroundColor $warningColor
         Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
+        $script:logger.LogWarning("There was an issue revoking M365 license: $($license.name)")
     } 
 }
 
@@ -926,12 +938,14 @@ function Assign-M365Group($user, $group)
     {
         New-MgGroupMember -GroupId $group.Id -DirectoryObjectId $user.Id -ErrorAction "Stop" | Out-Null
         Write-Host "Group assigned: $($group.Mail)" -ForegroundColor $successColor
+        $script:logger.LogChange("Assigned M365 group: $($group.Mail)")
     }
     catch
     {
         $errorRecord = $_
         Write-Host "There was an issue assigning the group." -ForegroundColor $warningColor
         Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
+        $script:logger.LogWarning("There was an issue assigning M365 group: $($group.Mail)")
     }    
 }
 
@@ -940,13 +954,15 @@ function Unassign-M365Group($user, $group)
     try
     {
         Remove-MgGroupMemberByRef -GroupId $group.Id -DirectoryObjectId $user.Id -ErrorAction "Stop" | Out-Null
-        Write-Host "Group removed: $($group.Mail)" -ForegroundColor $successColor
+        Write-Host "Group unassigned: $($group.Mail)" -ForegroundColor $successColor
+        $script:logger.LogChange("Unassigned M365 group: $($group.Mail)")
     }
     catch
     {
         $errorRecord = $_
         Write-Host "There was an issue unassigning the group." -ForegroundColor $warningColor
         Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
+        $script:logger.LogWarning("There was an issue unassigning M365 group: $($group.Mail)")
     }
 }
 
@@ -1038,22 +1054,35 @@ function Get-SharedMailbox($upn)
 {
     if ($null -eq $upn) { throw "Can't get shared mailbox. UPN is null." }
 
-    $mailbox = Get-EXOMailbox -Identity $upn -ErrorAction "SilentlyContinue"
+    try
+    {
+        $mailbox = Get-EXOMailbox -Identity $upn -ErrorAction "Stop"
+    }
+    catch
+    {
+        $errorRecord = $_
+        if ($errorRecord.Exception.Message -ilike "*HttpStatusCode=404*")
+        {
+            Write-Host "Mailbox not found." -ForegroundColor $warningColor
+            return
+        }
+        Write-Host "There was an issue getting the mailbox." -ForegroundColor $warningColor
+        Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
+        return
+    }
+    
     if (($mailbox) -and ($mailbox.RecipientTypeDetails -eq 'SharedMailbox'))
     {
         Write-Host "Mailbox found!" -ForegroundColor $successColor
-        $mailbox | Select-Object -Property @("DisplayName", "UserPrincipalName", @{ label = "Type"; expression = { $_.RecipientTypeDetails } }) | Out-Host
-        return $mailbox
+        $mailbox | Select-Object -Property @("DisplayName", "UserPrincipalName", @{ label = "Type"; expression = { $_.RecipientTypeDetails } }) | Out-Host        
     }
     elseif ($mailbox)
     {
         Write-Host "Mailbox was found but it's not a shared mailbox. Type is '$($mailbox.RecipientTypeDetails)'." -ForegroundColor $warningColor
+        return
     }
-    else
-    {
-        Write-Host "Mailbox not found." -ForegroundColor $warningColor
-    }
-    return $null
+
+    return $mailbox
 }
 
 function Grant-MailboxAccess($user, $mailbox)
@@ -1067,27 +1096,33 @@ function Grant-MailboxAccess($user, $mailbox)
             1 # Read and Manage
             {
                 Add-MailboxPermission -Identity $mailbox.UserPrincipalName -User $user.UserPrincipalName -AccessRights "FullAccess" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop" | Out-Null
+                Write-Host "Granted read and manage access to mailbox! (If they didn't already have it.)" -ForegroundColor $successColor
+                $script:logger.LogChange("Granted read and manage access to mailbox: $($mailbox.UserPrincipalName)")
                 break
             }
             2 # Send As
             {
                 Add-RecipientPermission -Identity $mailbox.UserPrincipalName -Trustee $user.UserPrincipalName -AccessRights "SendAs" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop" | Out-Null
+                Write-Host "Granted send as access to mailbox! (If they didn't already have it.)" -ForegroundColor $successColor
+                $script:logger.LogChange("Granted send as access to mailbox: $($mailbox.UserPrincipalName)")
                 break
             }
             3 # Both
             {
                 Add-MailboxPermission -Identity $mailbox.UserPrincipalName -User $user.UserPrincipalName -AccessRights "FullAccess" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop" | Out-Null
                 Add-RecipientPermission -Identity $mailbox.UserPrincipalName -Trustee $user.UserPrincipalName -AccessRights "SendAs" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop" | Out-Null
+                Write-Host "Granted read and manage + send as access to mailbox! (If they didn't already have it.)" -ForegroundColor $successColor
+                $script:logger.LogChange("Granted read and manage + send as access to mailbox: $($mailbox.UserPrincipalName)")
                 break
             }
         }
-        Write-Host "Granted access to mailbox! (If they didn't already have the access.)" -ForegroundColor $successColor
     }
     catch
     {
         $errorRecord = $_
         Write-Host "There was an issue granting mailbox access. Please try again." -ForegroundColor $warningColor
         Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
+        $script:logger.LogWarning("There was an issue granting access to mailbox: $($mailbox.UserPrincipalName)")
     }    
 }
 
@@ -1102,27 +1137,33 @@ function Revoke-MailboxAccess($user, $mailbox)
             1 # Read and Manage
             {
                 Remove-MailboxPermission -Identity $mailbox.UserPrincipalName -User $user.UserPrincipalName -AccessRights "FullAccess" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop"
+                Write-Host "Revoked read and manage access to mailbox! (Assuming they had it.)" -ForegroundColor $successColor
+                $script:logger.LogChange("Revoked read and manage access to mailbox: $($mailbox.UserPrincipalName)")
                 break
             }
             2 # Send As
             {
                 Remove-RecipientPermission -Identity $mailbox.UserPrincipalName -Trustee $user.UserPrincipalName -AccessRights "SendAs" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop"
+                Write-Host "Revoked send as access to mailbox! (Assuming they had it.)" -ForegroundColor $successColor
+                $script:logger.LogChange("Revoked send as access to mailbox: $($mailbox.UserPrincipalName)")
                 break
             }
             3 # Both
             {
                 Remove-MailboxPermission -Identity $mailbox.UserPrincipalName -User $user.UserPrincipalName -AccessRights "FullAccess" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop"
                 Remove-RecipientPermission -Identity $mailbox.UserPrincipalName -Trustee $user.UserPrincipalName -AccessRights "SendAs" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop"
+                Write-Host "Revoked read and manage + send as access to mailbox! (Assuming they had it.)" -ForegroundColor $successColor
+                $script:logger.LogChange("Revoked read and manage + send as access to mailbox: $($mailbox.UserPrincipalName)")
                 break
             }
         }
-        Write-Host "Revoked access to mailbox! (Assuming they had access.)" -ForegroundColor $successColor
     }
     catch
     {
         $errorRecord = $_
         Write-Host "There was an issue revoking mailbox access. Please try again." -ForegroundColor $warningColor
         Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
+        $script:logger.LogWarning("There was an issue revoking access to mailbox: $($mailbox.UserPrincipalName)")
     }
 }
 
@@ -1179,9 +1220,10 @@ function New-Checkbox($checked)
     return "[ ]"
 }
 
+# classes
 class Logger
 {
-    # Implementing logger as a singleton. Meaning there should only be one instance in the program!
+    # Implemented as a singleton, meaning there should only be one instance in the program!
 
     # Can't make the constructor private, so we'll just hide it.
     hidden Logger()
@@ -1238,7 +1280,7 @@ class Logger
 
     [void] ShowLogs()
     {
-        $this.Logs = $this.Logs | Sort-Object TimeStamp
+        $this.Logs = $this.Logs | Sort-Object "Timestamp"
         foreach ($log in $this.Logs)
         {
             # Pipe to Get-Date for a simplified timestamp.
@@ -1265,7 +1307,6 @@ class Logger
     }
 }
 
-# classes
 class GotoWizard
 {
     # fields
@@ -1388,8 +1429,7 @@ class GotoWizard
         $emailQuery = "email eq `"$($this.upn)`""
 
         # Here we apply the query params directly to the URI instead of passing them to the body param of Invoke-RestMethod.
-        # That other way will apply URI encoding to the query params, but encode spaces with + signs instead of %20. 
-        # The GoTo API doesn't accept this.
+        # That way would apply URI encoding to the query params, but encode spaces with + signs instead of %20. The GoTo API doesn't accept this.
         $emailQuery = UriEncode-QueryParam $emailQuery
         $uri = $uri + "?filter=$emailQuery"
 
@@ -1548,7 +1588,15 @@ class GotoWizard
         }
 
         $response = SafelyInvoke-RestMethod -Method $method -Uri $uri -Headers $headers -Body ($body | ConvertTo-Json)
-        if ($response) { Write-Host "Assigned role: $newRoleName`n" -ForegroundColor $script:successColor }        
+        if ($response)
+        { 
+            Write-Host "Assigned role: $newRoleName`n" -ForegroundColor $script:successColor
+            $script:logger.LogChange("Assigned GoTo role: $newRoleName")
+        }
+        else
+        {
+            $script:logger.LogWarning("There was an issue assigning GoTo role: $newRoleName")
+        }
     }
 
     [void] DisplayLinkToOutboundCallerId()
