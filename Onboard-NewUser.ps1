@@ -223,7 +223,7 @@ function Start-M365UserWizard($upn)
 
 function New-M365User($upn, $mailNickName, $displayName, $firstName, $lastName, $jobTitle, $department, $usageLocation)
 {
-    $tempPassword = Get-TempPassword
+    $tempPassword = New-TempPassword
     Write-Host "Temp Password: $tempPassword" -ForegroundColor $infoColor
     $passwordProfile = @{
         "password"                             = $tempPassword
@@ -259,7 +259,7 @@ function New-M365User($upn, $mailNickName, $displayName, $firstName, $lastName, 
     return $user
 }
 
-function Get-TempPassword
+function New-TempPassword
 {
     $words = @("red", "orange", "yellow", "green", "blue", "purple", "silver", "gold", "flower", "mushroom", "lake", "river",
         "mountain", "valley", "jungle", "cavern", "rain", "thunder", "lightning", "storm", "fire", "lion", "wolf", "bear", "hawk",
@@ -1120,7 +1120,7 @@ function Grant-MailboxAccess($user, $mailbox)
     catch
     {
         $errorRecord = $_
-        Write-Host "There was an issue granting mailbox access. Please try again." -ForegroundColor $warningColor
+        Write-Host "There was an issue granting mailbox access." -ForegroundColor $warningColor
         Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
         $script:logger.LogWarning("There was an issue granting access to mailbox: $($mailbox.UserPrincipalName)")
     }    
@@ -1161,7 +1161,7 @@ function Revoke-MailboxAccess($user, $mailbox)
     catch
     {
         $errorRecord = $_
-        Write-Host "There was an issue revoking mailbox access. Please try again." -ForegroundColor $warningColor
+        Write-Host "There was an issue revoking mailbox access." -ForegroundColor $warningColor
         Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
         $script:logger.LogWarning("There was an issue revoking access to mailbox: $($mailbox.UserPrincipalName)")
     }
@@ -1339,13 +1339,27 @@ class GotoWizard
 
     # methods
     [void] Start()
-    {
-        if ($null -eq $this.gotoUser)
+    {       
+        if ($this.gotoUser)
         {
-            Write-Host "Goto user not found." -ForegroundColor $script:warningColor
-            return
+            Write-Host "Found GoTo user!`n" -ForegroundColor $script:successColor
         }
-        Write-Host "Found GoTo user!`n" -ForegroundColor $script:successColor
+        else
+        {
+            Write-Host "Goto user not found." -ForegroundColor $script:infoColor
+
+            $shouldCreate = Prompt-YesOrNo "Create user?"
+            if (-not($shouldCreate)) { return }
+
+            $emailParts = Get-EmailParts $this.upn
+            $correct = Prompt-YesOrNo "This first name?: $($emailParts.FirstName)"
+            if (-not($correct)) { $emailParts.FirstName = Read-Host "Enter first name" }
+
+            $correct = Prompt-YesOrNo "This last name?: $($emailParts.LastName)"
+            if (-not($correct)) { $emailParts.LastName = Read-Host "Enter last name" }
+            
+            $this.gotouser = $this.CreateUser($this.upn, $emailParts.FirstName, $emailParts.LastName)
+        }
 
         $keepGoing = $true
         while ($keepGoing)
@@ -1382,7 +1396,33 @@ class GotoWizard
 
     [object] GetApiSecret()
     {
-        return Get-Secret -Name "YZJrirO-73fEk6aZO5QgZg" -AsPlainText
+        $secret = $null
+        $keepGoing = $true        
+        do
+        {
+            try
+            {
+                $secret = Get-Secret -Name "YZJrirO-73fEk6aZO5QgZg" -AsPlainText
+                $keepGoing = $false
+            }
+            catch [Microsoft.PowerShell.SecretManagement.PasswordRequiredException]
+            {
+                Write-Host "You entered an incorrect password for your secret store." -ForegroundColor $script:warningColor
+                $tryAgain = Prompt-YesOrNo "Try again?"
+                if (-not($tryAgain)) { $keepGoing = $false }
+            }
+            catch
+            {
+                $errorRecord = $_
+                Write-Host "There was an issue getting GoTo API secrets." -ForegroundColor $script:warningColor
+                Write-Host $errorRecord.Exception.Message -ForegroundColor $script:warningColor
+                $tryAgain = Prompt-YesOrNo "Try again?"
+                if (-not($tryAgain)) { $keepGoing = $false }
+            }
+        }
+        while ($keepGoing)
+
+        return $secret
     }
 
     [string] GetAccessToken()
@@ -1398,6 +1438,36 @@ class GotoWizard
         $authCode = Invoke-OAuth2AuthorizationEndpoint -Uri $authUri -Client_id $this.clientId -Redirect_uri $redirectUri
         $token = Invoke-OAuth2TokenEndpoint @authCode -Uri $accessTokenUri -Client_secret $this.clientSecret -Client_auth_method "client_secret_basic"
         return $token.access_token
+    }
+
+    [object] CreateUser($upn, $firstName, $lastName)
+    {       
+        $method = "Post"
+        $uri = "https://api.getgo.com/identity/v1/Users"
+        $headers = @{
+            "Authorization" = "Bearer $($this.accessToken)"
+            "Content-Type" = "application/json"
+        }        
+        $body = @{
+            "users" = @( [PSCustomObject]@{
+                "email" = $upn
+                "firstName" = $firstName
+                "lastName" = $lastName
+            })
+            "licenseKeys" = @( 7902142105473202120 ) # License key for GoTo Connect Voice.
+        } | ConvertTo-Json
+
+        $response = SafelyInvoke-RestMethod -Method $method -Uri $uri -Headers $headers -Body $body
+        if ($response)
+        {
+            Write-Host "GoTo user created!" -ForegroundColor $script:successColor
+            $script:logger.LogChange("GoTo user created with username: $upn")
+        }
+        else
+        {
+            $script:logger.LogWarning("There was an issue creating GoTo user with username: $upn")
+        }
+        return $response
     }
 
     [int] PromptMenu()
@@ -1439,14 +1509,15 @@ class GotoWizard
 
     [void] ShowUserInfo()
     {
-        $role = $this.GetUserRole()
+        $this.gotoUser = Invoke-GetWithRetry { $this.GetUser() }
+        $role = $this.GetUserRole()        
         # I'd also show their external caller ID, but this is not accessible from the public API.
         $this.gotoUser | Add-Member -NotePropertyName "role" -NotePropertyValue $role -PassThru | Format-List -Property @("email", "firstName", "lastName", "role") | Out-Host
     }
 
     [string] GetUserRole()
     {
-        $this.gotoUser = $this.GetUser()
+        $this.gotoUser = Invoke-GetWithRetry { $this.GetUser() }
         
         # Check for a built-in (system) admin role.
         if ($this.gotoUser.adminRoles)
@@ -1519,7 +1590,7 @@ class GotoWizard
     [void] AssignUserRole($roleSelection)
     {
         # Need to refresh the user's info here because the method of assigning a new role depends on their current one.
-        $this.gotoUser = $this.GetUser()
+        $this.gotoUser = Invoke-GetWithRetry { $this.GetUser() }
         
         $method = "Put"
         $uri = ""
@@ -1585,7 +1656,7 @@ class GotoWizard
                 $newRoleName = $this.allCustomRoles[$roleId]
                 break
             }
-        }
+        } 
 
         $response = SafelyInvoke-RestMethod -Method $method -Uri $uri -Headers $headers -Body ($body | ConvertTo-Json)
         if ($response)
@@ -1701,5 +1772,9 @@ while ($keepGoing)
         }
     }
 }
+
+$userProps = Get-UserProperties $user
+Show-UserProperties -BasicProps $userProps.basicProps -Licenses $userProps.Licenses -Groups $userProps.Groups -AdminRoles $userProps.AdminRoles
+$script:logger.ShowLogs()
 
 Read-Host "Press Enter to exit"
