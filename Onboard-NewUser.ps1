@@ -245,7 +245,7 @@ function New-M365User($upn, $mailNickName, $displayName, $firstName, $lastName, 
     
     try
     {
-        $user = New-Mguser @params
+        $user = New-Mguser @params -ErrorAction "Stop"
     }
     catch
     {
@@ -448,7 +448,7 @@ function Get-UserLicenses($user)
 
     try
     {
-        $licenseDetails = Get-MGUserLicenseDetail -UserId $user.UserPrincipalName
+        $licenseDetails = Get-MGUserLicenseDetail -UserId $user.UserPrincipalName -ErrorAction "Stop"
     }
     catch
     {
@@ -498,8 +498,9 @@ function Get-UserAdminRoles($user)
     return $adminRoles
 }
 
-function Show-UserProperties($basicProps, $licenses, $groups, $adminRoles)
+function Show-M365UserProperties($basicProps, $licenses, $groups, $adminRoles)
 {
+    Show-Separator "M365 User"
     $basicProps | Out-Host
 
     Show-Separator "Licenses"
@@ -555,16 +556,17 @@ function Prompt-MainMenu
 
     do
     {
-        $isValidSelection = $selection -imatch '^\s*[1-6]\s*$' # regex matches 1-6 but allows spaces
-        if (-not($isValidSelection))
+        $selection = $selection.Trim()
+        $validSelection = $selection -imatch '^[1-6]$' # regex matches 1-6
+        if (-not($validSelection))
         {
-            Write-Host "Please enter a number 1-6." -ForegroundColor $warningColor
+            Write-Host "Please enter 1-6." -ForegroundColor $warningColor
             $selection = Read-Host
         }
     }
-    while (-not($isValidSelection))
+    while (-not($validSelection))
 
-    return $selection.Trim()
+    return [int]$selection
 }
 
 function Prompt-BrsEmail($message)
@@ -598,7 +600,7 @@ function Start-M365LicenseWizard($user)
             {
                 Show-Separator "Licenses"
                 # Capture this in a var first because Get-UserLicenses does not work in the pipeline. (It doesn't enumerate its output!)
-                $licenses = Get-UserLicenses $user 
+                $licenses = Get-UserLicenses $user
                 $licenses | Select-Object -ExpandProperty "Name" | Sort-Object | Out-Host
                 break
             }
@@ -628,23 +630,25 @@ function Start-M365LicenseWizard($user)
 
 function Prompt-LicenseMenu
 {
+    $selection = Read-Host ("`nChoose an option:`n" +
+    "[1] View assigned licenses`n" +                        
+    "[2] Grant license`n" +
+    "[3] Revoke license`n" +
+    "[4] Finish with licenses`n")
+
     do
-    {
-        $response = Read-Host ("`nChoose an option:`n" +
-            "[1] View assigned licenses`n" +                        
-            "[2] Grant license`n" +
-            "[3] Revoke license`n" +
-            "[4] Finish with licenses`n")
-        
-        $validResponse = $response -imatch '^\s*[1-4]\s*$' # regex matches 1-4 but allows spaces
-        if (-not($validResponse))
+    {        
+        $selection = $selection.Trim()
+        $validSelection = $selection -imatch '^[1-4]$' # regex matches 1-4
+        if (-not($validSelection))
         {
             Write-Host "Please enter 1-4." -ForegroundColor $warningColor
+            $selection = Read-Host
         }
     }
-    while (-not($validResponse))
+    while (-not($validSelection))
 
-    return [int]$response
+    return [int]$selection
 }
 
 function Get-AvailableLicenses
@@ -678,27 +682,27 @@ function Prompt-LicenseToGrant($availableLicenses)
     $option = 0    
     $availableLicenses | Sort-Object -Property "Name" | ForEach-Object { $option++; $_ | Add-Member -NotePropertyName "Option" -NotePropertyValue $option }
     $availableLicenses | Sort-Object -Property "Option" | Format-Table -Property @("Option", "Name", "Available", "Purchased") | Out-Host
+    $selection = (Read-Host "Select an option (1-$option)") -As [int]
 
     do
-    {
-        $response = (Read-Host "Select an option (1 - $option)") -As [int]
-        # check that response is a number between 1 and option count (avoids use of regex because that's not great for matching multi-digit number ranges)
-        $validResponse = ($response -is [int]) -and (($response -ge 1) -and ($response -le $option))
-        if (-not($validResponse)) 
+    {        
+        # Check that selection is a number between 1 and option count. (Avoids use of regex because that's not great for matching multi-digit number ranges.)
+        $validSelection = ($selection -is [int]) -and (($selection -ge 1) -and ($selection -le $option))
+        if (-not($validSelection)) 
         {
-            Write-Host "Please enter a number 1-$option." -ForegroundColor $warningColor
+            Write-Host "Please enter 1-$option." -ForegroundColor $warningColor
+            $selection = Read-Host -As [int]
         }
     }
-    while (-not($validResponse))
+    while (-not($validSelection))
 
     foreach ($license in $availableLicenses)
     {
-        if ($license.option -eq [int]$response)
+        if ($license.option -eq [int]$selection)
         {
             return $license
         }
     }
-    return $null
 }
 
 function Grant-License($user, $license)
@@ -730,22 +734,23 @@ function Prompt-LicenseToRevoke($assignedLicenses)
         }
     }
     $optionList | Sort-Object -Property "Option" | Format-Table -Property @("Option", "Name") | Out-Host
+    $selection = (Read-Host "Select an option (1-$option)") -As [int]
 
     do
     {
-        $response = (Read-Host "Select an option (1 - $option)") -As [int]
-        # check that response is a number between 1 and option count (avoids use of regex because that's not great for matching multi-digit number ranges)
-        $validResponse = ($response -is [int]) -and (($response -ge 1) -and ($response -le $option))
-        if (-not($validResponse)) 
+        # Check that selection is a number between 1 and option count. (Avoids use of regex because that's not great for matching multi-digit number ranges.)
+        $validSelection = ($selection -is [int]) -and (($selection -ge 1) -and ($selection -le $option))
+        if (-not($validSelection)) 
         {
-            Write-Host "Please enter a number 1-$option." -ForegroundColor $warningColor
+            Write-Host "Please enter 1-$option." -ForegroundColor $warningColor
+            $selection = Read-Host -As [int]
         }
     }
-    while (-not($validResponse))
+    while (-not($validSelection))
 
     foreach ($license in $optionList)
     {
-        if ($license.option -eq [int]$response)
+        if ($license.option -eq [int]$selection)
         {
             return $license
         }
@@ -779,7 +784,7 @@ function Prompt-YesOrNo($question)
         $validResponse = $response -imatch '^\s*[yn]\s*$' # regex matches y or n but allows spaces
         if (-not($validResponse)) 
         {
-            Write-Warning "Please enter y or n."
+            Write-Host "Please enter y or n." -ForegroundColor $warningColor
         }
     }
     while (-not($validResponse))
@@ -873,23 +878,25 @@ function Start-M365GroupWizard($user)
 
 function Prompt-GroupMenu
 {
+    $selection = Read-Host ("`nChoose an option:`n" +
+    "[1] View assigned groups`n" +                        
+    "[2] Assign group`n" +
+    "[3] Remove group`n" +
+    "[4] Finish with groups`n")
+
     do
-    {
-        $response = Read-Host ("`nChoose an option:`n" +
-            "[1] View assigned groups`n" +                        
-            "[2] Assign group`n" +
-            "[3] Remove group`n" +
-            "[4] Finish with groups`n")
-        
-        $validResponse = $response -imatch '^\s*[1-4]\s*$' # regex matches 1-4 but allows spaces
-        if (-not($validResponse))
+    {        
+        $selection = $selection.Trim()
+        $validSelection = $selection -imatch '^[1-4]$' # regex matches 1-4
+        if (-not($validSelection))
         {
             Write-Host "Please enter 1-4." -ForegroundColor $warningColor
+            $selection = Read-Host
         }
     }
-    while (-not($validResponse))
+    while (-not($validSelection))
 
-    return [int]$response
+    return [int]$selection
 }
 
 function Get-M365Group($email)
@@ -1031,23 +1038,25 @@ function Start-MailboxWizard($user)
 
 function Prompt-MailboxMenu
 {
+    $selection = Read-Host ("`nChoose an option:`n" +
+    "[1] View assigned mailboxes`n" +                        
+    "[2] Grant access to mailbox`n" +
+    "[3] Revoke access to mailbox`n" +
+    "[4] Finish with mailboxes`n")
+
     do
     {
-        $response = Read-Host ("`nChoose an option:`n" +
-            "[1] View assigned mailboxes`n" +                        
-            "[2] Grant access to mailbox`n" +
-            "[3] Revoke access to mailbox`n" +
-            "[4] Finish with mailboxes`n")
-        
-        $validResponse = $response -imatch '^\s*[1-4]\s*$' # regex matches 1-4 but allows spaces
-        if (-not($validResponse))
+        $selection = $selection.Trim()
+        $validSelection = $selection -imatch '^[1-4]$' # regex matches 1-4
+        if (-not($validSelection))
         {
             Write-Host "Please enter 1-4." -ForegroundColor $warningColor
+            $selection = Read-Host
         }
     }
-    while (-not($validResponse))
+    while (-not($validSelection))
 
-    return [int]$response
+    return [int]$selection
 }
 
 function Get-SharedMailbox($upn)
@@ -1169,17 +1178,18 @@ function Revoke-MailboxAccess($user, $mailbox)
 
 function Prompt-MailboxAccessType
 {
+    $accessType = Read-Host  ("[1] Read & Manage`n" +
+        "[2] Send As`n" +
+        "[3] Both`n")
+
     do
     {
-        $accessType = Read-Host  ("[1] Read & Manage`n" +
-            "[2] Send As`n" +
-            "[3] Both`n")
         $accessType = $accessType.Trim()
         $isValidResponse = $accessType -imatch '^[1-3]$' # regex matches 1-3
-
         if (-not($isValidResponse))
         {
-            Write-Host "Please enter a number 1-3." -ForegroundColor $warningColor
+            Write-Host "Please enter 1-3." -ForegroundColor $warningColor
+            $accessType = Read-Host
         }
     }
     while (-not($isValidResponse))
@@ -1280,6 +1290,7 @@ class Logger
 
     [void] ShowLogs()
     {
+        Show-Separator "Logs"
         $this.Logs = $this.Logs | Sort-Object "Timestamp"
         foreach ($log in $this.Logs)
         {
@@ -1326,10 +1337,14 @@ class GotoWizard
     {
         $this.upn = $upn
         $this.gotoSecret = $this.GetApiSecret()
+        if ($null -eq $this.gotoSecret) { return }
+
         $this.clientId = $this.gotoSecret.ClientID
         $this.clientSecret = $this.gotoSecret.ClientSecret
         $this.accountKey = $this.gotoSecret.AccountKey
         $this.accessToken = $this.GetAccessToken()
+        if ($null -eq $this.accessToken) { return }
+
         $this.gotoUser = $this.GetUser()
         $this.allCustomRoles = $this.GetAllCustomRoles()
     }
@@ -1340,6 +1355,18 @@ class GotoWizard
     # methods
     [void] Start()
     {       
+        if ($null -eq $this.gotoSecret)
+        {
+            Write-Host "Could not start GoTo wizard because GoTo secret was not obtained." -ForegroundColor $script:warningColor
+            return
+        }
+
+        if ($null -eq $this.accessToken)
+        {
+            Write-Host "Could not start GoTo wizard because GoTo access token was not obtained." -ForegroundColor $script:warningColor
+            return
+        }
+        
         if ($this.gotoUser)
         {
             Write-Host "Found GoTo user!`n" -ForegroundColor $script:successColor
@@ -1405,17 +1432,21 @@ class GotoWizard
                 $secret = Get-Secret -Name "YZJrirO-73fEk6aZO5QgZg" -AsPlainText
                 $keepGoing = $false
             }
-            catch [Microsoft.PowerShell.SecretManagement.PasswordRequiredException]
-            {
-                Write-Host "You entered an incorrect password for your secret store." -ForegroundColor $script:warningColor
-                $tryAgain = Prompt-YesOrNo "Try again?"
-                if (-not($tryAgain)) { $keepGoing = $false }
-            }
             catch
             {
                 $errorRecord = $_
-                Write-Host "There was an issue getting GoTo API secrets." -ForegroundColor $script:warningColor
-                Write-Host $errorRecord.Exception.Message -ForegroundColor $script:warningColor
+                $exceptionType = $errorRecord.Exception.GetType().FullName
+                # We must check for exception type this way instead of catching it directly since the type is unavailable when the class definition loads.
+                if ($exceptionType -eq "Microsoft.PowerShell.SecretManagement.PasswordRequiredException")
+                {
+                    Write-Host "You entered an incorrect password for your secret store." -ForegroundColor $script:warningColor
+                }
+                else
+                {
+                    Write-Host "There was an issue getting GoTo API secrets." -ForegroundColor $script:warningColor
+                    Write-Host $errorRecord.Exception.Message -ForegroundColor $script:warningColor
+
+                }
                 $tryAgain = Prompt-YesOrNo "Try again?"
                 if (-not($tryAgain)) { $keepGoing = $false }
             }
@@ -1730,7 +1761,7 @@ $script:grantMailboxesCompleted = $false
 $script:gotoSetupCompleted = $false
 
 $userProps = Get-UserProperties $user
-Show-UserProperties -BasicProps $userProps.basicProps -Licenses $userProps.Licenses -Groups $userProps.Groups -AdminRoles $userProps.AdminRoles
+Show-M365UserProperties -BasicProps $userProps.basicProps -Licenses $userProps.Licenses -Groups $userProps.Groups -AdminRoles $userProps.AdminRoles
 
 $keepGoing = $true
 while ($keepGoing)
@@ -1741,7 +1772,7 @@ while ($keepGoing)
         1 # Show M365 user info
         {
             $userProps = Get-UserProperties $user
-            Show-UserProperties -BasicProps $userProps.basicProps -Licenses $userProps.Licenses -Groups $userProps.Groups -AdminRoles $userProps.AdminRoles
+            Show-M365UserProperties -BasicProps $userProps.basicProps -Licenses $userProps.Licenses -Groups $userProps.Groups -AdminRoles $userProps.AdminRoles
             break
         }
         2 # Grant licenses
@@ -1774,7 +1805,7 @@ while ($keepGoing)
 }
 
 $userProps = Get-UserProperties $user
-Show-UserProperties -BasicProps $userProps.basicProps -Licenses $userProps.Licenses -Groups $userProps.Groups -AdminRoles $userProps.AdminRoles
+Show-M365UserProperties -BasicProps $userProps.basicProps -Licenses $userProps.Licenses -Groups $userProps.Groups -AdminRoles $userProps.AdminRoles
 $script:logger.ShowLogs()
 
 Read-Host "Press Enter to exit"
