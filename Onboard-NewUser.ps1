@@ -1509,11 +1509,17 @@ class GotoWizard
             "[3] $(New-Checkbox $this.cidStepCompleted) Assign outbound caller ID`n" +
             "[4] Finish GoTo setup`n")
 
-        while ($selection -notmatch '^\s*[1-4]\s*$') # regex matches 1-4 but allows spaces
+        do
         {
-            Write-Host "Please enter 1-4." -ForegroundColor $script:warningColor
-            $selection = Read-Host
+            $selection = $selection.Trim()
+            $validSelection = $selection -imatch '^[1-4]$' # regex matches 1-4
+            if (-not($validSelection))
+            {
+                Write-Host "Please enter 1-4." -ForegroundColor $script:warningColor
+                $selection = Read-Host
+            }
         }
+        while (-not($validSelection))
 
         return [int]$selection
     }
@@ -1606,16 +1612,21 @@ class GotoWizard
             $optionsCount++
             $menuText = $menuText + "[$optionsCount] $roleName`n"            
         }
-
         $selection = Read-Host $menuText
 
-        while ($selection -notmatch "^\s*[1-$optionsCount]\s*$") # regex matches 1 - optionsCount but allows spaces
+        do
         {
-            Write-Host "Please enter 1-$optionsCount." -ForegroundColor $script:warningColor
-            $selection = Read-Host
+            $selection = $selection.Trim()
+            $validSelection = $selection -imatch "^[1-$optionsCount]$" # regex matches 1-optionsCount
+            if (-not($validSelection))
+            {
+                Write-Host "Please enter 1-$optionsCount." -ForegroundColor $script:warningColor
+                $selection = Read-Host
+            }
         }
+        while (-not($validSelection))
 
-        return [int]$selection.Trim()
+        return [int]$selection
     }
 
     [void] AssignUserRole($roleSelection)
@@ -1792,7 +1803,10 @@ while ($keepGoing)
         }
         5 # Setup GoTo account
         {
-            $gotoWizard = [GotoWizard]::New($upn)
+            if ($null -eq $gotoWizard)
+            {
+                $gotoWizard = [GotoWizard]::New($upn) 
+            }            
             $gotoWizard.Start()
             break
         }
