@@ -458,7 +458,7 @@ function Get-UserLicenses($user)
         return
     }
     
-    $licenses = New-Object System.Collections.Generic.List[object]
+    $licenses = [System.Collections.Generic.List[object]]::new(5)
     foreach ($license in $licenseDetails)
     {
         $licenseName = $script:licenseLookupTable[$license.SkuId]
@@ -656,7 +656,7 @@ function Get-AvailableLicenses
     $uri = "https://graph.microsoft.com/v1.0/subscribedSkus"
     $licenses = Invoke-MgGraphRequest -Method "Get" -Uri $uri
 
-    $licenseTable = New-Object System.Collections.Generic.List[object]
+    $licenseTable = [System.Collections.Generic.List[object]]::new(30)
     foreach ($license in $licenses.value)
     {
         $name = $script:licenseLookupTable[$license.skuId]
@@ -1238,7 +1238,7 @@ class Logger
     # Can't make the constructor private, so we'll just hide it.
     hidden Logger()
     { 
-        $this.logs = New-Object System.Collections.Generic.List[object]
+        $this.logs = [System.Collections.Generic.List[object]]::new(10)
     }
 
     # Can't make this field private or readonly, but we can hide it.
@@ -1329,8 +1329,8 @@ class GotoWizard
     [string] $accessToken
     [object] $gotoUser
     [System.Collections.Specialized.OrderedDictionary] $allCustomRoles
-    [bool] $roleStepCompleted
-    [bool] $cidStepCompleted
+    [bool] $assignRoleCompleted
+    [bool] $assignCallerIdCompleted
 
     # constructors
     GotoWizard($upn)
@@ -1505,8 +1505,8 @@ class GotoWizard
     {
         $selection = Read-Host ("Choose an option:`n" +
             "[1] Show GoTo user info`n" +
-            "[2] $(New-Checkbox $this.roleStepCompleted) Assign role`n" +
-            "[3] $(New-Checkbox $this.cidStepCompleted) Assign outbound caller ID`n" +
+            "[2] $(New-Checkbox $this.assignRoleCompleted) Assign role`n" +
+            "[3] $(New-Checkbox $this.assignCallerIdCompleted) Assign outbound caller ID`n" +
             "[4] Finish GoTo setup`n")
 
         do
@@ -1705,6 +1705,7 @@ class GotoWizard
         { 
             Write-Host "Assigned role: $newRoleName`n" -ForegroundColor $script:successColor
             $script:logger.LogChange("Assigned GoTo role: $newRoleName")
+            $this.assignRoleCompleted = $true
         }
         else
         {
@@ -1714,9 +1715,23 @@ class GotoWizard
 
     [void] DisplayLinkToOutboundCallerId()
     {
-        $line = $this.GetLine()
-        Write-Host "At this time the GoTo API can't change the outbound caller ID. You'll need to change it here:" -ForegroundColor $script:infoColor
-        Write-Host "https://my.jive.com/pbx/brs/extensions/lines/$($line.id)/general?source=root.nav.pbx.extensions.lines.list" -ForegroundColor $script:infoColor
+        $url = "https://my.jive.com/pbx/brs/extensions/lines/$(($this.GetLine()).id)/general?source=root.nav.pbx.extensions.lines.list"
+        Write-Host "At this time the GoTo API can't change the outbound caller ID. You'll need to change it here:`n$url" -ForegroundColor $script:infoColor
+        $shouldLaunch = Prompt-YesOrNo "Launch browser to this link?"
+        if ($shouldLaunch)
+        {
+            try 
+            {                
+                Start-Process $url # When passed a URL Start-Process will launch system default browser.
+            }
+            catch
+            {
+                $errorRecord = $_
+                Write-Host "There was an issue launching url" -ForegroundColor $script:warningColor
+                Write-Host $errorRecord.Exception.Message -ForegroundColor $script:warningColor
+            }      
+        }
+        $this.assignCallerIdCompleted = $true
     }
 
     [object] GetLine()
