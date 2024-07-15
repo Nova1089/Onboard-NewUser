@@ -112,7 +112,7 @@ function TryConnect-ExchangeOnline
     while ($null -eq $connectionStatus)
     {
         Write-Host "Connecting to Exchange Online..."
-        Connect-ExchangeOnline -ErrorAction SilentlyContinue
+        Connect-ExchangeOnline -ErrorAction "SilentlyContinue" -ShowBanner:$false -ForegroundColor $infoColor
         $connectionStatus = Get-ConnectionInformation
 
         if ($null -eq $connectionStatus)
@@ -175,7 +175,7 @@ function Get-M365User
         $errorRecord = $_
         if ($errorRecord.Exception.Message -ilike "*[Request_ResourceNotFound]*")
         {
-            Write-Warning "User not found."
+            Write-Warning "User not found." # Use Write-Warning instead of Write-Host so we can silence it when we choose.
             return
         }
         Write-Host "There was an issue getting the user." -ForegroundColor $warningColor
@@ -328,7 +328,7 @@ function Get-UserProperties($user)
 {
     $manager = Invoke-GetWithRetry { Get-UserManager -User $user }
     $basicProps = [PSCustomObject]@{
-        "Created Date/Time (UTC)" = $user.CreatedDateTime
+        "Created Date/Time"       = $user.CreatedDateTime.ToLocalTime()
         "Display Name"            = $user.DisplayName
         "UPN"                     = $user.UserPrincipalName
         "Title"                   = $user.JobTitle
@@ -361,7 +361,7 @@ function Invoke-GetWithRetry([ScriptBlock]$scriptBlock, $initialDelayInSeconds =
         {
             if ($retryCount -ge 2)
             { 
-                Write-Warning "$scriptBlock returned null. Retrying in $delay seconds..."
+                Write-Host "$scriptBlock returned null. Retrying in $delay seconds..." -ForegroundColor $warningColor
                 Start-SleepTimer -Seconds $delay
             }
             else
@@ -374,7 +374,7 @@ function Invoke-GetWithRetry([ScriptBlock]$scriptBlock, $initialDelayInSeconds =
     }
     while (($null -eq $response) -and ($retryCount -lt $maxRetries))
 
-    if ($retryCount -ge $maxRetries) { Write-Warning "Timed out trying to get a response." }
+    if ($retryCount -ge $maxRetries) { Write-Host "Timed out trying to get a response." -ForegroundColor $warningColor }
 
     return $response
 }
