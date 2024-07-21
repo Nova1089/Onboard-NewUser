@@ -24,14 +24,14 @@ function Show-Introduction
 
 function Use-Module($moduleName)
 {    
-    $keepGoing = -not(Test-ModuleInstalled $moduleName)
+    $keepGoing = -not(Confirm-ModuleInstalled $moduleName)
     while ($keepGoing)
     {
         Prompt-InstallModule $moduleName
-        Test-SessionPrivileges
+        Confirm-AdminPrivilege
         Install-Module $moduleName
 
-        if ((Test-ModuleInstalled $moduleName) -eq $true)
+        if ((Confirm-ModuleInstalled $moduleName) -eq $true)
         {
             Write-Host "Importing module..." -ForegroundColor $infoColor
             Import-Module $moduleName
@@ -40,7 +40,7 @@ function Use-Module($moduleName)
     }
 }
 
-function Test-ModuleInstalled($moduleName)
+function Confirm-ModuleInstalled($moduleName)
 {    
     $module = Get-Module -Name $moduleName -ListAvailable
     return ($null -ne $module)
@@ -56,7 +56,7 @@ function Prompt-InstallModule($moduleName)
     while ($confirmInstall -inotmatch "^\s*y\s*$") # regex matches a y but allows spaces
 }
 
-function Test-SessionPrivileges
+function Confirm-AdminPrivilege
 {
     $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
     $currentSessionIsAdmin = $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -74,7 +74,7 @@ function Test-SessionPrivileges
 
 function TryConnect-MgGraph($scopes)
 {
-    $connected = Test-ConnectedToMgGraph
+    $connected = Confirm-ConnectedToMgGraph
     while (-not($connected))
     {
         Write-Host "Connecting to Microsoft Graph..." -ForegroundColor $infoColor
@@ -88,7 +88,7 @@ function TryConnect-MgGraph($scopes)
             Connect-MgGraph -ErrorAction SilentlyContinue | Out-Null
         }
 
-        $connected = Test-ConnectedToMgGraph
+        $connected = Confirm-ConnectedToMgGraph
         if (-not($connected))
         {
             Read-Host "Failed to connect to Microsoft Graph. Press Enter to try again"
@@ -96,7 +96,7 @@ function TryConnect-MgGraph($scopes)
     }
 }
 
-function Test-ConnectedToMgGraph
+function Confirm-ConnectedToMgGraph
 {
     return $null -ne (Get-MgContext)
 }
@@ -117,12 +117,12 @@ function TryConnect-ExchangeOnline
     }
 }
 
-function Test-ValidBrsEmail($email)
+function Confirm-ValidBrsEmail($email)
 {
     $isBrsEmail = $email -imatch '^\S+@blueravensolar.com$'
     if (-not($isBrsEmail))
     {
-        Write-Host "Email can't have spaces and needs to end in @blueravensolar.com." -ForegroundColor $warningColor
+        Write-Host "Invalid BRS email." -ForegroundColor $warningColor
         return $false
     }
 
@@ -163,7 +163,7 @@ function Get-M365User
         {
             $user = Get-MgUser -UserID $upn -ErrorAction "Stop"
         }
-        Write-Host "User found!" -ForegroundColor $successColor     
+        Write-Host "User found!" -ForegroundColor $successColor
     }
     catch
     {
@@ -211,7 +211,21 @@ function Start-M365UserWizard($upn)
         "UsageLocation" = "US" # We always set this to US, even for those out-of-country.
     }
 
-    $user = New-M365User @params
+    do
+    {
+        $user = New-M365User @params
+        if ($null -eq $user)
+        {
+            $tryAgain = Prompt-YesOrNo "Try again?"
+            if (-not($tryAgain))
+            {
+                Write-Host "Exiting script." -ForegroundColor $infoColor
+                exit
+            }
+        }
+    }
+    while ($null -eq $user)
+    
     Set-UserManager -User $user -Manager $manager
     return $user
 }
@@ -570,7 +584,7 @@ function Prompt-BrsEmail($message)
     {
         $email = Read-Host "`n$message (you may omit the @blueravensolar.com)"
     }
-    while ($null -eq $email)
+    while (($null -eq $email) -or ("" -eq $email))
 
     $email = $email.Trim()
     $hasDomain = $email -imatch '^\S+@blueravensolar.com$'
@@ -596,6 +610,7 @@ function Start-M365LicenseWizard($user)
                 Show-Separator "Licenses"
                 # Capture this in a var first because Get-UserLicenses does not work in the pipeline. (It doesn't enumerate its output!)
                 $licenses = Get-UserLicenses $user
+                if ($null -eq $licenses) { break }
                 $licenses | Select-Object -ExpandProperty "Name" | Sort-Object | Out-Host
                 break
             }
@@ -603,14 +618,27 @@ function Start-M365LicenseWizard($user)
             {
                 $availableLicenses = Get-AvailableLicenses
                 $license = Prompt-LicenseToGrant $availableLicenses
-                Grant-License -User $user -License $license
-                $script:grantLicensesCompleted = $true
+                $hasLicense = Confirm-HasLicense -User $user -License $license
+                if ($hasLicense) 
+                { 
+                    Write-Host "User already has that license." -ForegroundColor $warningColor
+                    break
+                }
+                $success = Grant-License -User $user -License $license
+                if ($success) { $script:grantLicensesCompleted = $true }      
                 break
             }
             3 # Revoke license
             {
                 $assignedLicenses = Get-UserLicenses $user
+                if ($null -eq $assignedLicenses) { break }
                 $license = Prompt-LicenseToRevoke $assignedLicenses
+                $hasLicense = Confirm-HasLicense -User $user -License $license
+                if (-not($hasLicense)) 
+                { 
+                    Write-Host "User doesn't have that license." -ForegroundColor $warningColor
+                    break
+                }
                 Revoke-License -User $user -License $license
                 break
             }
@@ -700,6 +728,20 @@ function Prompt-LicenseToGrant($availableLicenses)
     }
 }
 
+function Confirm-HasLicense($user, $license)
+{
+    $grantedLicenses = Get-UserLicenses -User $user
+    if ($null -eq $grantedLicenses) { return $false }
+    foreach ($grantedLicense in $grantedLicenses)
+    {
+        if ($grantedLicense.SkuId -eq $license.SkuId) 
+        {
+            return $true
+        }
+    }
+    return $false
+}
+
 function Grant-License($user, $license)
 {
     try
@@ -707,6 +749,7 @@ function Grant-License($user, $license)
         Set-MgUserLicense -UserId $user.Id -AddLicenses @{SkuId = $license.SkuId } -RemoveLicenses @() -ErrorAction "Stop" | Out-Null
         Write-Host "License granted: $($license.name)" -ForegroundColor $successColor
         $script:logger.LogChange("Granted M365 license: $($license.name)")
+        $success = $true
     }
     catch
     {
@@ -714,7 +757,9 @@ function Grant-License($user, $license)
         Write-Host "There was an issue granting the license." -ForegroundColor $warningColor
         Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
         $script:logger.LogWarning("There was an issue granting M365 license: $($license.name)")
-    }  
+        $success = $false
+    }
+    return $success
 }
 
 function Prompt-LicenseToRevoke($assignedLicenses)
@@ -738,7 +783,7 @@ function Prompt-LicenseToRevoke($assignedLicenses)
         if (-not($validSelection)) 
         {
             Write-Host "Please enter 1-$option." -ForegroundColor $warningColor
-            $selection = Read-Host -As [int]
+            $selection = (Read-Host) -As [int]
         }
     }
     while (-not($validSelection))
@@ -766,7 +811,7 @@ function Revoke-License($user, $license)
         Write-Host "There was an issue revoking the license." -ForegroundColor $warningColor
         Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
         $script:logger.LogWarning("There was an issue revoking M365 license: $($license.name)")
-    } 
+    }
 }
 
 function Prompt-YesOrNo($question)
@@ -804,7 +849,9 @@ function Start-M365GroupWizard($user)
             1 # View assigned groups
             {
                 Show-Separator "Groups"
-                Get-UserGroups -User $user | Select-Object -ExpandProperty "DisplayName" | Sort-Object | Out-Host
+                $assignedGroups = Get-UserGroups -User $user
+                if ($null -eq $assignedGroups) { break }
+                $assignedGroups | Select-Object -ExpandProperty "DisplayName" | Sort-Object | Out-Host
                 break
             }
             2 # Assign group
@@ -820,7 +867,7 @@ function Start-M365GroupWizard($user)
                         continue
                     }
 
-                    $isAlreadyMember = Test-IsMemberOfGroup -User $user -Group $group
+                    $isAlreadyMember = Confirm-IsMemberOfGroup -User $user -Group $group
                     if ($isAlreadyMember)
                     {
                         Write-Host "$($user.DisplayName) is already a member of the group: $($group.DisplayName)." -ForegroundColor $warningColor
@@ -831,9 +878,9 @@ function Start-M365GroupWizard($user)
                 }
                 while (($null -eq $group) -or ($isAlreadyMember))
 
-                Assign-M365Group -User $user -Group $group
-                $script:assignGroupsCompleted = $true
-                break      
+                $success = Assign-M365Group -User $user -Group $group
+                if ($success) { $script:assignGroupsCompleted = $true }                
+                break
             }
             3 # Remove group
             {
@@ -848,7 +895,7 @@ function Start-M365GroupWizard($user)
                         continue
                     }
 
-                    $isAlreadyMember = Test-IsMemberOfGroup -User $user -Group $group
+                    $isAlreadyMember = Confirm-IsMemberOfGroup -User $user -Group $group
                     if (-not($isAlreadyMember))
                     {
                         Write-Host "$($user.DisplayName) is not a member of the group: $($group.DisplayName)." -ForegroundColor $warningColor
@@ -902,14 +949,10 @@ function Get-M365Group($email)
     }
     catch
     {
-        $errorRecord = $_
-        if ($errorRecord.Exception.Message -ilike "*[Request_ResourceNotFound]*")
-        {
-            Write-Host "Group not found." -ForegroundColor $warningColor
-            return
-        }        
+        $errorRecord = $_    
         Write-Host "There was an issue getting the group." -ForegroundColor $warningColor
         Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
+        return
     }
 
     if ($group)
@@ -917,13 +960,18 @@ function Get-M365Group($email)
         Write-Host "Found Group!" -ForegroundColor $successColor
         $group | Select-Object -Property @("DisplayName", "Mail", "Description") | Out-Host        
     }
+    else
+    {
+        Write-Host "Group not found." -ForegroundColor $warningColor
+    }
 
     return $group
 }
 
-function Test-IsMemberOfGroup($user, $group)
+function Confirm-IsMemberOfGroup($user, $group)
 {
     $currentAssignedGroups = Get-UserGroups -User $user
+    if ($null -eq $currentAssignedGroups) { return $false}
     foreach ($assignedGroup in $currentAssignedGroups)
     {
         if ($assignedGroup.Id -eq $group.Id)
@@ -941,6 +989,7 @@ function Assign-M365Group($user, $group)
         New-MgGroupMember -GroupId $group.Id -DirectoryObjectId $user.Id -ErrorAction "Stop" | Out-Null
         Write-Host "Group assigned: $($group.Mail)" -ForegroundColor $successColor
         $script:logger.LogChange("Assigned M365 group: $($group.Mail)")
+        $success = $true
     }
     catch
     {
@@ -948,7 +997,9 @@ function Assign-M365Group($user, $group)
         Write-Host "There was an issue assigning the group." -ForegroundColor $warningColor
         Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
         $script:logger.LogWarning("There was an issue assigning M365 group: $($group.Mail)")
-    }    
+        $success = $false
+    }
+    return $success
 }
 
 function Unassign-M365Group($user, $group)
@@ -1000,8 +1051,8 @@ function Start-MailboxWizard($user)
                 }
                 while ($null -eq $mailbox)
 
-                Grant-MailboxAccess -User $user -Mailbox $mailbox
-                $script:grantMailboxesCompleted = $true
+                $success = Grant-MailboxAccess -User $user -Mailbox $mailbox
+                if ($success) { $script:grantMailboxesCompleted = $true }                
                 break
             }
             3 # Revoke access to mailbox
@@ -1120,6 +1171,7 @@ function Grant-MailboxAccess($user, $mailbox)
                 break
             }
         }
+        $success = $true
     }
     catch
     {
@@ -1127,7 +1179,9 @@ function Grant-MailboxAccess($user, $mailbox)
         Write-Host "There was an issue granting mailbox access." -ForegroundColor $warningColor
         Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
         $script:logger.LogWarning("There was an issue granting access to mailbox: $($mailbox.UserPrincipalName)")
-    }    
+        $success = $false
+    }
+    return $success
 }
 
 function Revoke-MailboxAccess($user, $mailbox)
@@ -1202,18 +1256,19 @@ function SafelyInvoke-RestMethod($method, $uri, $headers, $body)
     try
     {
         $response = Invoke-RestMethod -Method $method -Uri $uri -Headers $headers -Body $body -ErrorVariable "responseError"
+        $success = $true
     }
     catch
     {
         Write-Host $responseError[0].Message -ForegroundColor $warningColor
-        return $false # Wasn't successful.
+        $success = $false
     }
 
     if ($response)
     {
         return $response
     }
-    return $true # Was successful.
+    return $success
 }
 
 function New-Checkbox($checked)
@@ -1746,7 +1801,7 @@ class GotoWizard
                 $newRoleName = $this.allCustomRoles[$roleId]
                 break
             }
-        } 
+        }
 
         $response = SafelyInvoke-RestMethod -Method $method -Uri $uri -Headers $headers -Body ($body | ConvertTo-Json)
         if ($response)
@@ -1775,7 +1830,7 @@ class GotoWizard
             catch
             {
                 $errorRecord = $_
-                Write-Host "There was an issue launching url" -ForegroundColor $script:warningColor
+                Write-Host "There was an issue launching the url." -ForegroundColor $script:warningColor
                 Write-Host $errorRecord.Exception.Message -ForegroundColor $script:warningColor
             }      
         }
@@ -1805,26 +1860,32 @@ Use-Module "PSAuthClient" # Docs for this module found here https://github.com/a
 TryConnect-MgGraph -Scopes @("User.ReadWrite.All", "Group.ReadWrite.All", "Organization.Read.All")
 TryConnect-ExchangeOnline
 
+$keepGoing = $true
 do
 {
     $upn = Prompt-BrsEmail "Enter user UPN"
-    $isValidEmail = Test-ValidBrsEmail $upn
+    $isValidEmail = Confirm-ValidBrsEmail $upn
     if (-not($isValidEmail)) { continue }
-    $user = Get-M365User -UPN $upn -Detailed -WarningAction "SilentlyContinue"
 
+    $user = Get-M365User -UPN $upn -Detailed -WarningAction "SilentlyContinue"
     if ($null -eq $user)
     {
-        Write-Host "User does not exist yet. Create them with this UPN?: $upn" -ForegroundColor $infoColor
-        $createUser = Prompt-YesOrNo "Create this user in M365?"
+        Write-Host "User does not exist yet." -ForegroundColor $infoColor
+        $createUser = Prompt-YesOrNo "Create user with this UPN?: $upn"
         if ($createUser)
         {
             $user = Start-M365UserWizard $upn
             # Get more details about the user.
             $user = Invoke-GetWithRetry { Get-M365User -UPN $user.UserPrincipalName -Detailed }
+            if ($user) { $keepGoing = $false }            
         }
     }
+    else
+    {
+        $keepGoing = $false
+    }
 }
-while ($null -eq $user)
+while ($keepGoing)
 
 # Initialize logger. Singleton that should have one unchanging instance.
 Set-Variable -Name "logger" -Value ([Logger]::GetInstance()) -Scope "Script" -Option "Constant"
