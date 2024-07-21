@@ -93,11 +93,7 @@ function TryConnect-MgGraph($scopes)
         {
             Read-Host "Failed to connect to Microsoft Graph. Press Enter to try again"
         }
-        else
-        {
-            Write-Host "Successfully connected!" -ForegroundColor $successColor
-        }
-    }    
+    }
 }
 
 function Test-ConnectedToMgGraph
@@ -111,10 +107,9 @@ function TryConnect-ExchangeOnline
 
     while ($null -eq $connectionStatus)
     {
-        Write-Host "Connecting to Exchange Online..."
-        Connect-ExchangeOnline -ErrorAction "SilentlyContinue" -ShowBanner:$false -ForegroundColor $infoColor
+        Write-Host "Connecting to Exchange Online..." -ForegroundColor $infoColor
+        Connect-ExchangeOnline -ErrorAction "SilentlyContinue" -ShowBanner:$false 
         $connectionStatus = Get-ConnectionInformation
-
         if ($null -eq $connectionStatus)
         {
             Read-Host -Prompt "Failed to connect to Exchange Online. Press Enter to try again"
@@ -1335,6 +1330,7 @@ class GotoWizard
     # constructors
     GotoWizard($upn)
     {
+        Write-Host "Connecting to GoTo..." -ForegroundColor $script:infoColor
         $this.upn = $upn
         $this.gotoSecret = $this.GetApiSecret()
         if ($null -eq $this.gotoSecret) { return }
@@ -1458,6 +1454,54 @@ class GotoWizard
 
     [string] GetAccessToken()
     {
+        $token = $this.TryRefreshToken()
+        if ($token) { return $token }
+        return $this.GetAccessTokenByAuthCode()
+    }
+
+    [string] TryRefreshToken()
+    {
+        try
+        {
+            $refreshToken = Get-Secret -Name "gtrt" -AsPlainText -ErrorAction "Stop"
+        }
+        catch
+        {
+            return $null
+        }
+        
+        $method = "Post"
+        $uri = "https://authentication.logmeininc.com/oauth/token"
+        $headers = @{
+            "Authorization" = "Basic $(ConvertTo-Base64 "$($this.clientId):$($this.clientSecret)")"
+        }
+        $body = @{
+            "grant_type"    = "refresh_token"
+            "refresh_token" = $refreshToken
+        }
+
+        try
+        {
+            $response = Invoke-RestMethod -Method $method -Uri $uri -Headers $headers -Body $body
+        }
+        catch
+        {
+            return $null
+        }
+
+        if ($response)
+        {
+            if ($response.refresh_token)
+            {
+                Set-Secret -Name "gtrt" -Secret $response.refresh_token -Vault "LocalStore"
+            }            
+            return $response.access_token
+        }
+        return $null
+    }
+
+    [string] GetAccessTokenByAuthCode()
+    {
         # Function handles GoTo connect OAUTH2 authorization code grant flow. (Obtains auth code then uses that to get a temp access token.)
         # https://developer.goto.com/guides/Authentication/03_HOW_accessToken/
         # https://developer.goto.com/Authentication/#section/Authorization-Flows
@@ -1468,6 +1512,10 @@ class GotoWizard
     
         $authCode = Invoke-OAuth2AuthorizationEndpoint -Uri $authUri -Client_id $this.clientId -Redirect_uri $redirectUri
         $token = Invoke-OAuth2TokenEndpoint @authCode -Uri $accessTokenUri -Client_secret $this.clientSecret -Client_auth_method "client_secret_basic"
+        if ($token.refresh_token) 
+        { 
+            Set-Secret -Name "gtrt" -Secret $token.refresh_token -Vault "LocalStore"
+        }
         return $token.access_token
     }
 
