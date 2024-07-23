@@ -1032,7 +1032,7 @@ function Start-MailboxWizard($user)
             1 # View assigned mailboxes
             {
                 Write-Host ("Sorry, at this time there is no fast way to get all assigned mailboxes for a user.`n" +
-                    "For that you may run this script instead, but it takes a little while...`n" +
+                    "For that you may run this script instead, but it takes a little while.`n" +
                     "https://help.blueravensolar.com/a/solutions/articles/19000077594") -ForegroundColor $infoColor
                 break
             }
@@ -1345,7 +1345,7 @@ class Logger
         foreach ($log in $this.Logs)
         {
             # Pipe to Get-Date for a simplified timestamp.
-            $message = "[$($log.Timestamp | Get-Date -Format 'yyyy-mm-dd a\t hh:mm tt')] $($log.Message)"
+            $message = "[$($log.Timestamp | Get-Date -Format 'yyyy-mm-dd hh:mm tt')] $($log.Message)"
             switch ($log.Level)
             {
                 'Change' 
@@ -1420,7 +1420,7 @@ class GotoWizard
         
         if ($this.gotoUser)
         {
-            Write-Host "Found GoTo user!`n" -ForegroundColor $script:successColor
+            Write-Host "Found GoTo user!" -ForegroundColor $script:successColor
         }
         else
         {
@@ -1464,7 +1464,7 @@ class GotoWizard
                 }
                 4 # Finish
                 {
-                    $script:gotoSetupCompleted = $true
+                    if ($this.gotoUser) { $script:gotoSetupCompleted = $true }                    
                     $keepGoing = $false
                     break
                 }
@@ -1577,7 +1577,7 @@ class GotoWizard
     [object] CreateUser($upn, $firstName, $lastName)
     {       
         $method = "Post"
-        $uri = "https://api.getgo.com/identity/v1/Users"
+        $uri = "https://api.getgo.com/admin/rest/v1/accounts/$($this.accountKey)/users"
         $headers = @{
             "Authorization" = "Bearer $($this.accessToken)"
             "Content-Type" = "application/json"
@@ -1606,7 +1606,7 @@ class GotoWizard
 
     [int] PromptMenu()
     {
-        $selection = Read-Host ("Choose an option:`n" +
+        $selection = Read-Host ("`nChoose an option:`n" +
             "[1] Show GoTo user info`n" +
             "[2] $(New-Checkbox $this.assignRoleCompleted) Assign role`n" +
             "[3] $(New-Checkbox $this.assignCallerIdCompleted) Assign outbound caller ID`n" +
@@ -1644,7 +1644,8 @@ class GotoWizard
         $uri = $uri + "?filter=$emailQuery"
 
         $response = SafelyInvoke-RestMethod -Method $method -Uri $uri -Headers $headers
-        return $response.results[0]
+        if ($response.results) { return $response.results[0] }
+        return $null
     }
 
     [void] ShowUserInfo()
@@ -1704,7 +1705,7 @@ class GotoWizard
 
     [int] PromptRoleToAssign()
     {
-        $menuText = ("Select a role to assign:`n" +
+        $menuText = ("`nSelect a role to assign:`n" +
             "[1] Super Admin`n" +
             "[2] Admin (Configure PBX)`n" +
             "[3] Member`n")
@@ -1850,6 +1851,11 @@ class GotoWizard
     }
 }
 
+function ConvertTo-Base64($text)
+{
+    return [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($text))
+}
+
 # main
 Initialize-ColorScheme
 Show-Introduction
@@ -1930,8 +1936,9 @@ while ($keepGoing)
             if ($null -eq $gotoWizard)
             {
                 $gotoWizard = [GotoWizard]::New($upn) 
-            }            
-            $gotoWizard.Start()
+            }
+
+            if ($gotoWizard) { $gotoWizard.Start() }            
             break
         }
         6 # Finish
