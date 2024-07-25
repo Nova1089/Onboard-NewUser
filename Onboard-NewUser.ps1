@@ -1,7 +1,7 @@
 <#
 Version 1.0
 
-This script onboards or modifies a new user in M365 and GoTo.
+This script creates or modifies a new user in M365 and GoTo.
 #>
 
 #This directive will throw an error if not running PowerShell core (PowerShell v6+).
@@ -18,7 +18,7 @@ function Initialize-ColorScheme
 
 function Show-Introduction
 {
-    Write-Host "This script onboards or modifies a new user in M365 and GoTo." -ForegroundColor $infoColor
+    Write-Host "This script creates or modifies a new user in M365 and GoTo." -ForegroundColor $infoColor
     Read-Host "Press Enter to continue"
 }
 
@@ -81,11 +81,11 @@ function TryConnect-MgGraph($scopes)
 
         if ($null -ne $scopes)
         {
-            Connect-MgGraph -Scopes $scopes -ErrorAction SilentlyContinue | Out-Null
+            Connect-MgGraph -Scopes $scopes -ErrorAction "SilentlyContinue" | Out-Null
         }
         else
         {
-            Connect-MgGraph -ErrorAction SilentlyContinue | Out-Null
+            Connect-MgGraph -ErrorAction "SilentlyContinue" | Out-Null
         }
 
         $connected = Confirm-ConnectedToMgGraph
@@ -103,7 +103,7 @@ function Confirm-ConnectedToMgGraph
 
 function TryConnect-ExchangeOnline
 {
-    $connectionStatus = Get-ConnectionInformation -ErrorAction SilentlyContinue
+    $connectionStatus = Get-ConnectionInformation -ErrorAction "SilentlyContinue"
 
     while ($null -eq $connectionStatus)
     {
@@ -117,6 +117,25 @@ function TryConnect-ExchangeOnline
     }
 }
 
+function Prompt-BrsEmail($message)
+{
+    do
+    {
+        $email = Read-Host "`n$message (you may omit the @blueravensolar.com)"
+    }
+    while (($null -eq $email) -or ("" -eq $email))
+
+    $email = $email.Trim()
+    $hasDomain = $email -imatch '^\S*@blueravensolar.com$'
+
+    if (-not($hasDomain))
+    {
+        $email += '@blueravensolar.com'
+    }
+
+    return $email
+}
+
 function Confirm-ValidBrsEmail($email)
 {
     $isBrsEmail = $email -imatch '^\S+@blueravensolar.com$'
@@ -126,6 +145,7 @@ function Confirm-ValidBrsEmail($email)
         return $false
     }
 
+    # Regex matches word.word@blueravensolar.com
     $isStandard = $email -imatch '^[\w-]+\.[\w-]+(@blueravensolar\.com)$'    
     if (-not($isStandard))
     {
@@ -135,6 +155,28 @@ function Confirm-ValidBrsEmail($email)
     }
 
     return $true
+}
+
+function Prompt-YesOrNo($question)
+{
+    Write-Host "$question`n[Y] Yes  [N] No"
+
+    do
+    {
+        $response = Read-Host
+        $validResponse = $response -imatch '^\s*[yn]\s*$' # regex matches y or n but allows spaces
+        if (-not($validResponse)) 
+        {
+            Write-Host "Please enter y or n." -ForegroundColor $warningColor
+        }
+    }
+    while (-not($validResponse))
+
+    if ($response -imatch '^\s*y\s*$') # regex matches a y but allows spaces
+    {
+        return $true
+    }
+    return $false
 }
 
 function Get-M365User
@@ -179,7 +221,7 @@ function Get-M365User
     return $user
 }
 
-function Start-M365UserWizard($upn)
+function Start-M365UserCreationWizard($upn)
 {
     $emailParts = Get-EmailParts $upn
     $correct = Prompt-YesOrNo "This preferred first name?: $($emailParts.FirstName)"
@@ -189,7 +231,11 @@ function Start-M365UserWizard($upn)
     if (-not($correct)) { $emailParts.LastName = Read-Host "Enter last name" }
 
     $correct = Prompt-YesOrNo "This display name?: $($emailParts.DisplayName)"
-    if (-not($correct)) { $emailParts.DisplayName = Read-Host "Enter display name" }
+    if (-not($correct))
+    {
+        $emailParts.DisplayName = Read-Host "Enter display name" 
+        $emailParts.MailNickName = Read-Host "Enter mail nickname (first.last)"
+    }
 
     $jobTitle = Read-Host "Enter job title"
     $department = Read-Host "Enter department"
@@ -200,7 +246,9 @@ function Start-M365UserWizard($upn)
     }
     while ($null -eq $manager)
 
-    $params = @{
+    $manager | Select-Object -Property @("DisplayName", "UserPrincipalName") | Out-Host
+
+    $params = [ordered]@{
         "UPN"           = $upn
         "MailNickName"  = $emailParts.MailNickName
         "DisplayName"   = $emailParts.DisplayName
@@ -209,7 +257,15 @@ function Start-M365UserWizard($upn)
         "JobTitle"      = $jobTitle
         "Department"    = $department
         "UsageLocation" = "US" # We always set this to US, even for those out-of-country.
+        "Manager"       = $manager.UserPrincipalName
     }
+
+    Write-Host "Create user with these parameters?"
+    $params | Out-Host
+    $continue = Prompt-YesOrNo
+    if (-not($continue)) { return }
+
+    $params.Remove("Manager") # Manager was just in params to display in host. Remove before passing to New-M365User.
 
     do
     {
@@ -219,7 +275,7 @@ function Start-M365UserWizard($upn)
             $tryAgain = Prompt-YesOrNo "Try again?"
             if (-not($tryAgain))
             {
-                Write-Host "Exiting script." -ForegroundColor $infoColor
+                Read-Host "Press Enter to exit"
                 exit
             }
         }
@@ -228,6 +284,30 @@ function Start-M365UserWizard($upn)
     
     Set-UserManager -User $user -Manager $manager
     return $user
+}
+
+function Get-EmailParts($email)
+{    
+    $email = $email.Trim()    
+    $mailNickName = $email.Split('@')[0] # Get the part of the email before the @ sign.
+    $nameParts = $mailNickName.Split('.')
+    $firstName = Capitalize-FirstLetter $nameParts[0]
+    if ($nameParts[1]) { $lastName = Capitalize-FirstLetter $nameParts[1] }    
+    $displayName = "$firstName $lastName"
+    
+    return @{
+        "FirstName"    = $firstName
+        "LastName"     = $lastName
+        "DisplayName"  = $displayName
+        "MailNickName" = $mailNickName
+    }
+}
+
+function Capitalize-FirstLetter($string)
+{
+    if ($null -eq $string) { return }
+    $string = $string.Trim()
+    return $string.substring(0, 1).ToUpper() + $string.substring(1)
 }
 
 function New-M365User($upn, $mailNickName, $displayName, $firstName, $lastName, $jobTitle, $department, $usageLocation)
@@ -254,7 +334,7 @@ function New-M365User($upn, $mailNickName, $displayName, $firstName, $lastName, 
     
     try
     {
-        $user = New-Mguser @params -ErrorAction "Stop"
+        $user = New-MgUser @params -ErrorAction "Stop"
     }
     catch
     {
@@ -293,36 +373,12 @@ function New-TempPassword
     return $word1 + '/' + $word2 + '/' + $word3 + '/' + $specialChar + $num
 }
 
-function Get-EmailParts($email)
-{    
-    $email = $email.Trim()
-    # Get the part of the email before the @ sign.
-    $mailNickName = $email.Split('@')[0]
-    $nameParts = $mailNickName.Split('.')
-    $displayName = ""
-    foreach ($name in $nameParts)
-    {
-        $displayName += (Capitalize-FirstLetter $name) + " "
-    }
-    
-    return @{
-        "FirstName"    = Capitalize-FirstLetter $nameParts[0]
-        "LastName"     = Capitalize-FirstLetter $nameParts[1]
-        "DisplayName"  = $displayName
-        "MailNickName" = $mailNickName
-    }
-}
-
-function Capitalize-FirstLetter($string)
-{
-    return $string.substring(0, 1).ToUpper() + $string.substring(1)
-}
-
 function Set-UserManager($user, $manager)
 {
     try
     {
         Set-MgUserManagerByRef -UserId $user.Id -OdataId "https://graph.microsoft.com/v1.0/users/$($manager.Id)" -ErrorAction "Stop" | Out-Null
+        Write-Host "Manager assigned!" -ForegroundColor $successColor
     }
     catch
     {
@@ -330,27 +386,6 @@ function Set-UserManager($user, $manager)
         Write-Host "There was an issue assigning manager." -ForegroundColor $warningColor
         Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
         $script:logger.LogWarning("There was an issue assigning manager in M365: $($manager.UserPrincipalName)")
-    }
-}
-
-function Get-UserProperties($user)
-{
-    $manager = Invoke-GetWithRetry { Get-UserManager -User $user }
-    $basicProps = [PSCustomObject]@{
-        "Created Date/Time"       = $user.CreatedDateTime.ToLocalTime()
-        "Display Name"            = $user.DisplayName
-        "UPN"                     = $user.UserPrincipalName
-        "Title"                   = $user.JobTitle
-        "Department"              = $user.Department
-        "Manager"                 = $manager.displayName
-        "Usage Location"          = $user.UsageLocation
-    }
-
-    return @{
-        "BasicProps" = $basicProps
-        "Licenses"   = Get-UserLicenses $user
-        "Groups"     = Get-UserGroups $user
-        "AdminRoles" = Get-UserAdminRoles $user
     }
 }
 
@@ -394,6 +429,27 @@ function Start-SleepTimer($seconds)
     {
         Write-Progress -Activity "Waiting..." -Status "$i / $seconds seconds"
         Start-Sleep -Seconds 1
+    }
+}
+
+function Get-UserProperties($user)
+{
+    $manager = Invoke-GetWithRetry { Get-UserManager -User $user }
+    $basicProps = [PSCustomObject]@{
+        "Created Date/Time" = $user.CreatedDateTime.ToLocalTime()
+        "Display Name"      = $user.DisplayName
+        "UPN"               = $user.UserPrincipalName
+        "Title"             = $user.JobTitle
+        "Department"        = $user.Department
+        "Manager"           = $manager.displayName
+        "Usage Location"    = $user.UsageLocation
+    }
+
+    return @{
+        "BasicProps" = $basicProps
+        "Licenses"   = Get-UserLicenses $user
+        "Groups"     = Get-UserGroups $user
+        "AdminRoles" = Get-UserAdminRoles $user
     }
 }
 
@@ -578,23 +634,13 @@ function Prompt-MainMenu
     return [int]$selection
 }
 
-function Prompt-BrsEmail($message)
+function New-Checkbox($checked)
 {
-    do
+    if ($checked)
     {
-        $email = Read-Host "`n$message (you may omit the @blueravensolar.com)"
+        return "[X]"
     }
-    while (($null -eq $email) -or ("" -eq $email))
-
-    $email = $email.Trim()
-    $hasDomain = $email -imatch '^\S+@blueravensolar.com$'
-
-    if (-not($hasDomain))
-    {
-        $email += '@blueravensolar.com'
-    }
-
-    return $email
+    return "[ ]"
 }
 
 function Start-M365LicenseWizard($user)
@@ -812,28 +858,6 @@ function Revoke-License($user, $license)
         Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
         $script:logger.LogWarning("There was an issue revoking M365 license: $($license.name)")
     }
-}
-
-function Prompt-YesOrNo($question)
-{
-    Write-Host "$question`n[Y] Yes  [N] No"
-
-    do
-    {
-        $response = Read-Host
-        $validResponse = $response -imatch '^\s*[yn]\s*$' # regex matches y or n but allows spaces
-        if (-not($validResponse)) 
-        {
-            Write-Host "Please enter y or n." -ForegroundColor $warningColor
-        }
-    }
-    while (-not($validResponse))
-
-    if ($response -imatch '^\s*y\s*$') # regex matches a y but allows spaces
-    {
-        return $true
-    }
-    return $false
 }
 
 function Start-M365GroupWizard($user)
@@ -1142,7 +1166,7 @@ function Get-SharedMailbox($upn)
 
 function Grant-MailboxAccess($user, $mailbox)
 {
-    Write-Host "Access type to grant?`n" 
+    Write-Host "Access type to grant?" 
     $accessType = Prompt-MailboxAccessType
     try
     {
@@ -1170,6 +1194,10 @@ function Grant-MailboxAccess($user, $mailbox)
                 $script:logger.LogChange("Granted read and manage + send as access to mailbox: $($mailbox.UserPrincipalName)")
                 break
             }
+            4 # Go back
+            {
+                return
+            }
         }
         $success = $true
     }
@@ -1184,9 +1212,31 @@ function Grant-MailboxAccess($user, $mailbox)
     return $success
 }
 
+function Prompt-MailboxAccessType
+{
+    $accessType = Read-Host  ("[1] Read & Manage`n" +
+        "[2] Send As`n" +
+        "[3] Both`n" +
+        "[4] Go back`n")
+
+    do
+    {
+        $accessType = $accessType.Trim()
+        $isValidResponse = $accessType -imatch '^[1-4]$' # regex matches 1-4
+        if (-not($isValidResponse))
+        {
+            Write-Host "Please enter 1-4." -ForegroundColor $warningColor
+            $accessType = Read-Host
+        }
+    }
+    while (-not($isValidResponse))
+
+    return [int]$accessType
+}
+
 function Revoke-MailboxAccess($user, $mailbox)
 {
-    Write-Host "Access type to revoke?`n"
+    Write-Host "Access type to revoke?"
     $accessType = Prompt-MailboxAccessType
     try
     {
@@ -1214,6 +1264,10 @@ function Revoke-MailboxAccess($user, $mailbox)
                 $script:logger.LogChange("Revoked read and manage + send as access to mailbox: $($mailbox.UserPrincipalName)")
                 break
             }
+            4 # Go back
+            {
+                return
+            }
         }
     }
     catch
@@ -1223,32 +1277,6 @@ function Revoke-MailboxAccess($user, $mailbox)
         Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
         $script:logger.LogWarning("There was an issue revoking access to mailbox: $($mailbox.UserPrincipalName)")
     }
-}
-
-function Prompt-MailboxAccessType
-{
-    $accessType = Read-Host  ("[1] Read & Manage`n" +
-        "[2] Send As`n" +
-        "[3] Both`n")
-
-    do
-    {
-        $accessType = $accessType.Trim()
-        $isValidResponse = $accessType -imatch '^[1-3]$' # regex matches 1-3
-        if (-not($isValidResponse))
-        {
-            Write-Host "Please enter 1-3." -ForegroundColor $warningColor
-            $accessType = Read-Host
-        }
-    }
-    while (-not($isValidResponse))
-
-    return [int]$accessType
-}
-
-function UriEncode-QueryParam($queryParam)
-{ 
-    return [uri]::EscapeDataString($queryParam)
 }
 
 function SafelyInvoke-RestMethod($method, $uri, $headers, $body)
@@ -1271,13 +1299,14 @@ function SafelyInvoke-RestMethod($method, $uri, $headers, $body)
     return $success
 }
 
-function New-Checkbox($checked)
+function UriEncode-QueryParam($queryParam)
+{ 
+    return [uri]::EscapeDataString($queryParam)
+}
+
+function ConvertTo-Base64($text)
 {
-    if ($checked)
-    {
-        return "[X]"
-    }
-    return "[ ]"
+    return [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($text))
 }
 
 # classes
@@ -1345,7 +1374,7 @@ class Logger
         foreach ($log in $this.Logs)
         {
             # Pipe to Get-Date for a simplified timestamp.
-            $message = "[$($log.Timestamp | Get-Date -Format 'yyyy-mm-dd hh:mm tt')] $($log.Message)"
+            $message = "[$($log.Timestamp | Get-Date -Format 'yyyy-MM-dd hh:mm tt')] $($log.Message)"
             switch ($log.Level)
             {
                 'Change' 
@@ -1851,11 +1880,6 @@ class GotoWizard
     }
 }
 
-function ConvertTo-Base64($text)
-{
-    return [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($text))
-}
-
 # main
 Initialize-ColorScheme
 Show-Introduction
@@ -1865,6 +1889,9 @@ Use-Module "Microsoft.Powershell.SecretManagement"
 Use-Module "PSAuthClient" # Docs for this module found here https://github.com/alflokken/PSAuthClient
 TryConnect-MgGraph -Scopes @("User.ReadWrite.All", "Group.ReadWrite.All", "Organization.Read.All")
 TryConnect-ExchangeOnline
+
+# Initialize logger. Singleton that should have one unchanging instance.
+Set-Variable -Name "logger" -Value ([Logger]::GetInstance()) -Scope "Script" -Option "Constant"
 
 $keepGoing = $true
 do
@@ -1880,7 +1907,8 @@ do
         $createUser = Prompt-YesOrNo "Create user with this UPN?: $upn"
         if ($createUser)
         {
-            $user = Start-M365UserWizard $upn
+            $user = Start-M365UserCreationWizard $upn
+            if ($null -eq $user) { continue }
             # Get more details about the user.
             $user = Invoke-GetWithRetry { Get-M365User -UPN $user.UserPrincipalName -Detailed }
             if ($user) { $keepGoing = $false }            
@@ -1892,9 +1920,6 @@ do
     }
 }
 while ($keepGoing)
-
-# Initialize logger. Singleton that should have one unchanging instance.
-Set-Variable -Name "logger" -Value ([Logger]::GetInstance()) -Scope "Script" -Option "Constant"
 
 $script:grantLicensesCompleted = $false
 $script:assignGroupsCompleted = $false
