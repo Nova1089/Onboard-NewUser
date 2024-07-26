@@ -257,7 +257,7 @@ function Start-M365UserCreationWizard($upn)
         "JobTitle"      = $jobTitle
         "Department"    = $department
         "UsageLocation" = "US" # We always set this to US, even for those out-of-country.
-        "Manager"       = $manager.UserPrincipalName
+        "Manager"       = $manager.displayName
     }
 
     Write-Host "Create user with these parameters?"
@@ -472,7 +472,7 @@ function Get-UserManager($user)
     }
     
     if ($null -eq $manager) { return }
-    # Returns a dictionary.
+    # Returns a dictionary. The additional properties hold all the relevant data.
     return $manager.AdditionalProperties
 }
 
@@ -480,6 +480,7 @@ function Get-UserLicenses($user)
 {
     if ($null -eq $script:licenseLookupTable)
     {
+        # License SKU IDs listed here: https://learn.microsoft.com/en-us/entra/identity/users/licensing-service-plan-reference
         $script:licenseLookupTable = @{
             "8f0c5670-4e56-4892-b06d-91c085d7004f" = "App Connect IW"
             "4b9405b0-7788-4568-add1-99614e613b69" = "Exchange Online (Plan 1)"
@@ -590,15 +591,17 @@ function Show-Separator($title, [ConsoleColor]$color = "DarkCyan", [switch]$noLi
     {
         $separator = ""
     }
+    $hostWidthInChars = (Get-host).UI.RawUI.BufferSize.Width
 
-    # Truncate if it's too long.
-    If (($separator.length - 6) -gt ((Get-host).UI.RawUI.BufferSize.Width))
+    # Truncate title if it's too long.
+    if (($separator.length) -gt $hostWidthInChars)
     {
-        $separator = $separator.Remove((Get-host).UI.RawUI.BufferSize.Width - 5)
+        $separator = $separator.Remove($hostWidthInChars - 5)
+        $separator += " "
     }
 
     # Pad with dashes.
-    $separator = "--$($separator.PadRight(((Get-host).UI.RawUI.BufferSize.Width)-3,"-"))"
+    $separator = "--$($separator.PadRight($hostWidthInChars - 2, "-"))"
 
     if (-not($noLineBreaks))
     {        
@@ -663,6 +666,7 @@ function Start-M365LicenseWizard($user)
             2 # Grant license
             {
                 $availableLicenses = Get-AvailableLicenses
+                if ($null -eq $availableLicenses) { break }
                 $license = Prompt-LicenseToGrant $availableLicenses
                 $hasLicense = Confirm-HasLicense -User $user -License $license
                 if ($hasLicense) 
@@ -723,7 +727,17 @@ function Prompt-LicenseMenu
 function Get-AvailableLicenses
 {
     $uri = "https://graph.microsoft.com/v1.0/subscribedSkus"
-    $licenses = Invoke-MgGraphRequest -Method "Get" -Uri $uri
+    try
+    {
+        $licenses = Invoke-MgGraphRequest -Method "Get" -Uri $uri -ErrorAction "Stop"
+    }    
+    catch
+    {
+        $errorRecord = $_
+        Write-Host "There was an issue getting available licenses." -ForegroundColor $warningColor
+        Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
+        return
+    }
 
     $licenseTable = [System.Collections.Generic.List[object]]::new(30)
     foreach ($license in $licenses.value)
