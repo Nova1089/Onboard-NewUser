@@ -256,8 +256,8 @@ function Start-M365UserCreationWizard($upn)
         "LastName"      = $emailParts.LastName
         "JobTitle"      = $jobTitle
         "Department"    = $department
-        "UsageLocation" = "US" # We always set this to US, even for those out-of-country.
         "Manager"       = $manager.displayName
+        "UsageLocation" = "US" # We always set this to US, even for those out-of-country.        
     }
 
     Write-Host "Create user with these parameters?"
@@ -432,9 +432,17 @@ function Start-SleepTimer($seconds)
     }
 }
 
-function Get-UserProperties($user)
+function Get-UserProperties($user, [switch]$retryGetManager)
 {
-    $manager = Invoke-GetWithRetry { Get-UserManager -User $user }
+    if ($retryGetManager)
+    {
+        $manager = Invoke-GetWithRetry { Get-UserManager -User $user }
+    }
+    else
+    {
+        $manager = Get-UserManager -User $user
+    }
+    
     $basicProps = [PSCustomObject]@{
         "Created Date/Time" = $user.CreatedDateTime.ToLocalTime()
         "Display Name"      = $user.DisplayName
@@ -503,11 +511,13 @@ function Get-UserLicenses($user)
             "5b631642-bd26-49fe-bd20-1daaa972ef80" = "Microsoft PowerApps for Developer"
             "1f2f344a-700d-42c9-9427-5cea1d5d7ba6" = "Microsoft Stream"
             "3ab6abff-666f-4424-bfb7-f0bc274ec7bc" = "Microsoft Teams Essentials"
+            "36a0f3b3-adb5-49ea-bf66-762134cf063a" = "Microsoft Teams Premium"
             "4cde982a-ede4-4409-9ae6-b003453c8ea6" = "Microsoft Teams Rooms Pro"
             "18181a46-0d4e-45cd-891e-60aabd171b4e" = "Office 365 E1"
             "6fd2c87f-b296-42f0-b197-1e91e994b900" = "Office 365 E3"
             "c7df2760-2c81-4ef7-b578-5b5392b571df" = "Office 365 E5"
             "7b26f5ab-a763-4c00-a1ac-f6c4b5506945" = "Power BI Premium P1"
+            "f8a1db68-be16-40ed-86d5-cb42ce701560" = "Power BI Pro"
             "6470687e-a428-4b7a-bef2-8a291ad947c9" = "Windows Store for Business"
         }
     }
@@ -564,21 +574,19 @@ function Get-UserAdminRoles($user)
     return $adminRoles
 }
 
-function Show-M365UserProperties($basicProps, $licenses, $groups, $adminRoles)
+function Show-UserProperties($basicProps, $licenses, $groups, $adminRoles)
 {
     Show-Separator "M365 User"
-    $basicProps | Out-Host
+    if ($basicProps) { $basicProps | Out-Host }    
 
     Show-Separator "Licenses"
-    $licenses | Select-Object -ExpandProperty "Name" | Sort-Object | Out-Host
+    if ($licenses) { $licenses | Select-Object -ExpandProperty "Name" | Sort-Object | Out-Host }    
 
     Show-Separator "Groups"
-    $groups | Select-Object -ExpandProperty "DisplayName" | Sort-Object | Out-Host
+    if ($groups) { $groups | Select-Object -ExpandProperty "DisplayName" | Sort-Object | Out-Host }
     
     Show-Separator "Admin Roles"
-    $adminRoles | Select-Object -ExpandProperty "DisplayName" | Sort-Object | Out-Host
-    
-    Write-Host "`n"
+    if ($adminRoles) { $adminRoles | Select-Object -ExpandProperty "DisplayName" | Sort-Object | Out-Host }
 }
 
 function Show-Separator($title, [ConsoleColor]$color = "DarkCyan", [switch]$noLineBreaks)
@@ -668,6 +676,7 @@ function Start-M365LicenseWizard($user)
                 $availableLicenses = Get-AvailableLicenses
                 if ($null -eq $availableLicenses) { break }
                 $license = Prompt-LicenseToGrant $availableLicenses
+                if ($null -eq $license) { break }
                 $hasLicense = Confirm-HasLicense -User $user -License $license
                 if ($hasLicense) 
                 { 
@@ -683,6 +692,7 @@ function Start-M365LicenseWizard($user)
                 $assignedLicenses = Get-UserLicenses $user
                 if ($null -eq $assignedLicenses) { break }
                 $license = Prompt-LicenseToRevoke $assignedLicenses
+                if ($null -eq $license) { break }
                 $hasLicense = Confirm-HasLicense -User $user -License $license
                 if (-not($hasLicense)) 
                 { 
@@ -761,6 +771,12 @@ function Get-AvailableLicenses
 
 function Prompt-LicenseToGrant($availableLicenses)
 {
+    if ($null -eq $availableLicenses -or $availableLicenses.Count -eq 0)
+    {
+        Write-Host "There are no available licenses to grant." -ForegroundColor $warningColor
+        return
+    }
+    
     # Display available licenses with an option number next to each.
     $option = 0    
     $availableLicenses | Sort-Object -Property "Name" | ForEach-Object { $option++; $_ | Add-Member -NotePropertyName "Option" -NotePropertyValue $option }
@@ -774,7 +790,9 @@ function Prompt-LicenseToGrant($availableLicenses)
         if (-not($validSelection)) 
         {
             Write-Host "Please enter 1-$option." -ForegroundColor $warningColor
-            $selection = Read-Host -As [int]
+            $tryAgain = Prompt-YesOrNo "Try again?"
+            if (-not($tryAgain)) { return }
+            $selection = (Read-Host "Select an option (1-$option)") -As [int]
         }
     }
     while (-not($validSelection))
@@ -824,6 +842,13 @@ function Grant-License($user, $license)
 
 function Prompt-LicenseToRevoke($assignedLicenses)
 {    
+    if ($null -eq $assignedLicenses -or $assignedLicenses.Count -eq 0)
+    {
+        Write-Host "User has no licenses to revoke." -ForegroundColor $warningColor
+        return
+    }
+    
+    # Display assigned licenses with an option number next to each.
     $option = 0
     $optionList = $assignedLicenses | Sort-Object "Name" | ForEach-Object { 
         $option++
@@ -843,7 +868,9 @@ function Prompt-LicenseToRevoke($assignedLicenses)
         if (-not($validSelection)) 
         {
             Write-Host "Please enter 1-$option." -ForegroundColor $warningColor
-            $selection = (Read-Host) -As [int]
+            $tryAgain = Prompt-YesOrNo "Try again?"
+            if (-not($tryAgain)) { return }
+            $selection = (Read-Host "Select an option (1-$option)") -As [int]
         }
     }
     while (-not($validSelection))
@@ -1925,23 +1952,27 @@ do
             if ($null -eq $user) { continue }
             # Get more details about the user.
             $user = Invoke-GetWithRetry { Get-M365User -UPN $user.UserPrincipalName -Detailed }
-            if ($user) { $keepGoing = $false }            
+            if ($user)
+            { 
+                $userProps = Get-UserProperties -User $user -RetryGetManager
+                $keepGoing = $false 
+            }            
         }
     }
     else
     {
+        $userProps = Get-UserProperties $user
         $keepGoing = $false
     }
 }
 while ($keepGoing)
 
+Show-UserProperties -BasicProps $userProps.basicProps -Licenses $userProps.Licenses -Groups $userProps.Groups -AdminRoles $userProps.AdminRoles
+
 $script:grantLicensesCompleted = $false
 $script:assignGroupsCompleted = $false
 $script:grantMailboxesCompleted = $false
 $script:gotoSetupCompleted = $false
-
-$userProps = Get-UserProperties $user
-Show-M365UserProperties -BasicProps $userProps.basicProps -Licenses $userProps.Licenses -Groups $userProps.Groups -AdminRoles $userProps.AdminRoles
 
 $keepGoing = $true
 while ($keepGoing)
@@ -1952,7 +1983,7 @@ while ($keepGoing)
         1 # Show M365 user info
         {
             $userProps = Get-UserProperties $user
-            Show-M365UserProperties -BasicProps $userProps.basicProps -Licenses $userProps.Licenses -Groups $userProps.Groups -AdminRoles $userProps.AdminRoles
+            Show-UserProperties -BasicProps $userProps.basicProps -Licenses $userProps.Licenses -Groups $userProps.Groups -AdminRoles $userProps.AdminRoles
             break
         }
         2 # Grant licenses
@@ -1989,7 +2020,7 @@ while ($keepGoing)
 }
 
 $userProps = Get-UserProperties $user
-Show-M365UserProperties -BasicProps $userProps.basicProps -Licenses $userProps.Licenses -Groups $userProps.Groups -AdminRoles $userProps.AdminRoles
+Show-UserProperties -BasicProps $userProps.basicProps -Licenses $userProps.Licenses -Groups $userProps.Groups -AdminRoles $userProps.AdminRoles
 $script:logger.ShowLogs()
 
 Read-Host "Press Enter to exit"
