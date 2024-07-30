@@ -842,7 +842,7 @@ function Grant-License($user, $license)
 
 function Prompt-LicenseToRevoke($assignedLicenses)
 {    
-    if ($null -eq $assignedLicenses -or $assignedLicenses.Count -eq 0)
+    if (($null -eq $assignedLicenses) -or ($assignedLicenses.Count -eq 0))
     {
         Write-Host "User has no licenses to revoke." -ForegroundColor $warningColor
         return
@@ -859,8 +859,8 @@ function Prompt-LicenseToRevoke($assignedLicenses)
         }
     }
     $optionList | Sort-Object -Property "Option" | Format-Table -Property @("Option", "Name") | Out-Host
-    $selection = (Read-Host "Select an option (1-$option)") -As [int]
 
+    $selection = (Read-Host "Select an option (1-$option)") -As [int]
     do
     {
         # Check that selection is a number between 1 and option count. (Avoids use of regex because that's not great for matching multi-digit number ranges.)
@@ -875,13 +875,7 @@ function Prompt-LicenseToRevoke($assignedLicenses)
     }
     while (-not($validSelection))
 
-    foreach ($license in $optionList)
-    {
-        if ($license.option -eq [int]$selection)
-        {
-            return $license
-        }
-    }
+    return $optionList[$selection - 1]
 }
 
 function Revoke-License($user, $license)
@@ -949,30 +943,18 @@ function Start-M365GroupWizard($user)
             }
             3 # Remove group
             {
-                do
+                $assignedGroups = Get-UserGroups -User $user
+                if ($null -eq $assignedGroups) { break }
+                $group = Prompt-GroupToUnassign $assignedGroups
+                if ($null -eq $group) { break }
+                $isAlreadyMember = Confirm-IsMemberOfGroup -User $user -Group $group
+                if (-not($isAlreadyMember))
                 {
-                    $groupEmail = Prompt-BrsEmail "Enter group email"
-                    $group = Get-M365Group $groupEmail
-                    if ($null -eq $group)
-                    {
-                        $tryAgain = Prompt-YesOrNo "Try again?"
-                        if (-not($tryAgain)) { break outerSwitch }
-                        continue
-                    }
-
-                    $isAlreadyMember = Confirm-IsMemberOfGroup -User $user -Group $group
-                    if (-not($isAlreadyMember))
-                    {
-                        Write-Host "$($user.DisplayName) is not a member of the group: $($group.DisplayName)." -ForegroundColor $warningColor
-                        $tryAgain = Prompt-YesOrNo "Try again?"
-                        if (-not($tryAgain)) { break outerSwitch }
-                        continue
-                    }
+                    Write-Host "User isn't a member of that group." -ForegroundColor $warningColor
+                    break
                 }
-                while (($null -eq $group) -or (-not($isAlreadyMember)))
-
                 Unassign-M365Group -User $user -Group $group
-                break
+                break                
             }
             4 # Finish with groups
             {
@@ -1052,8 +1034,8 @@ function Assign-M365Group($user, $group)
     try
     {
         New-MgGroupMember -GroupId $group.Id -DirectoryObjectId $user.Id -ErrorAction "Stop" | Out-Null
-        Write-Host "Group assigned: $($group.Mail)" -ForegroundColor $successColor
-        $script:logger.LogChange("Assigned M365 group: $($group.Mail)")
+        Write-Host "Group assigned: $($group.DisplayName)" -ForegroundColor $successColor
+        $script:logger.LogChange("Assigned M365 group: $($group.DisplayName)")
         $success = $true
     }
     catch
@@ -1061,10 +1043,50 @@ function Assign-M365Group($user, $group)
         $errorRecord = $_
         Write-Host "There was an issue assigning the group." -ForegroundColor $warningColor
         Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
-        $script:logger.LogWarning("There was an issue assigning M365 group: $($group.Mail)")
+        $script:logger.LogWarning("There was an issue assigning M365 group: $($group.DisplayName)")
         $success = $false
     }
     return $success
+}
+
+function Prompt-GroupToUnassign($assignedGroups)
+{
+    if (($null -eq $assignedGroups) -or ($assignedGroups.Count -eq 0))
+    {
+        Write-Host "User has no groups to unassign." -ForegroundColor $warningColor
+        return
+    }
+
+    # Display assigned groups with an option number next to each.
+    $option = 0
+    $optionList = $assignedGroups | Sort-Object "DisplayName" | ForEach-Object {
+        $option++
+        [PSCustomObject]@{
+            "Option" = $option
+            "DisplayName" = $_.DisplayName
+            "Mail" = $_.Mail
+            "Description" = $_.Description
+            "Id" = $_.Id
+        }
+    }
+    $optionList | Sort-Object -Property "Option" | Format-Table -Property @("Option", "DisplayName", "Mail", "Description") | Out-Host
+
+    $selection = (Read-Host "Select an option (1-$option)") -As [int]
+    do
+    {
+        # Check that selection is a number between 1 and option count. (Avoids use of regex because that's not great for matching multi-digit number ranges.)
+        $validSelection = ($selection -is [int]) -and (($selection -ge 1) -and ($selection -le $option))
+        if (-not($validSelection)) 
+        {
+            Write-Host "Please enter 1-$option." -ForegroundColor $warningColor
+            $tryAgain = Prompt-YesOrNo "Try again?"
+            if (-not($tryAgain)) { return }
+            $selection = (Read-Host "Select an option (1-$option)") -As [int]
+        }
+    }
+    while (-not($validSelection))
+
+    return $optionList[$selection - 1]
 }
 
 function Unassign-M365Group($user, $group)
@@ -1072,15 +1094,15 @@ function Unassign-M365Group($user, $group)
     try
     {
         Remove-MgGroupMemberByRef -GroupId $group.Id -DirectoryObjectId $user.Id -ErrorAction "Stop" | Out-Null
-        Write-Host "Group unassigned: $($group.Mail)" -ForegroundColor $successColor
-        $script:logger.LogChange("Unassigned M365 group: $($group.Mail)")
+        Write-Host "Group unassigned: $($group.DisplayName)" -ForegroundColor $successColor
+        $script:logger.LogChange("Unassigned M365 group: $($group.DisplayName)")
     }
     catch
     {
         $errorRecord = $_
         Write-Host "There was an issue unassigning the group." -ForegroundColor $warningColor
         Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
-        $script:logger.LogWarning("There was an issue unassigning M365 group: $($group.Mail)")
+        $script:logger.LogWarning("There was an issue unassigning M365 group: $($group.DisplayName)")
     }
 }
 
@@ -1353,65 +1375,54 @@ function ConvertTo-Base64($text)
 # classes
 class Logger
 {
-    # Implemented as a singleton, meaning there should only be one instance in the program!
+    # Note: Don't try to implement logger as a singleton. 
+    # For one you can't truly make private constructors & members in PowerShell.
+    # For two the static instance will persist across the global terminal scope/session, even after exiting the script.
 
-    # Can't make the constructor private, so we'll just hide it.
-    hidden Logger()
+    # Constructors
+    Logger()
     { 
-        $this.logs = [System.Collections.Generic.List[object]]::new(10)
+        $this.Logs = [System.Collections.Generic.List[object]]::new(10)
     }
-
-    # Can't make this field private or readonly, but we can hide it.
-    hidden static [Logger] $instance
-
-    # This is how you're supposed to instantiate the logger.
-    static [Logger] GetInstance()
-    {
-        if ($null -eq [Logger]::instance)
-        {
-            [Logger]::instance = [Logger]::new()
-        }
-        return [Logger]::instance
-    }    
     
     # fields
-    hidden [System.Collections.Generic.List[object]] $logs
+    hidden [System.Collections.Generic.List[object]] $Logs
 
     # methods
     [void] LogChange($message)
     {
-        $logEntry = [PSCustomObject]@{
+        $logEntry = @{
             Timestamp = Get-Date
             Level     = 'Change'
             Message   = $message
         }
-        $this.logs.Add($logEntry)
+        $this.Logs.Add($logEntry)
     }
 
     [void] LogWarning($message)
     {
-        $logEntry = [PSCustomObject]@{
+        $logEntry = @{
             Timestamp = Get-Date
             Level     = 'Warning'
             Message   = $message
         }
-        $this.logs.Add($logEntry)
+        $this.Logs.Add($logEntry)
     }
 
     [void] LogError($message)
     {
-        $logEntry = [PSCustomObject]@{
+        $logEntry = @{
             Timestamp = Get-Date
             Level     = 'Error'
             Message   = $message
         }
-        $this.logs.Add($logEntry)
+        $this.Logs.Add($logEntry)
     }
 
     [void] ShowLogs()
     {
         Show-Separator "Logs"
-        $this.Logs = $this.Logs | Sort-Object "Timestamp"
+        $this.Logs = @(,$this.Logs) | Sort-Object "Timestamp" # Wrapping this.Logs in array is important so that pipeline works properly when Logs.Count is 1.
         foreach ($log in $this.Logs)
         {
             # Pipe to Get-Date for a simplified timestamp.
@@ -1930,9 +1941,7 @@ Use-Module "Microsoft.Powershell.SecretManagement"
 Use-Module "PSAuthClient" # Docs for this module found here https://github.com/alflokken/PSAuthClient
 TryConnect-MgGraph -Scopes @("User.ReadWrite.All", "Group.ReadWrite.All", "Organization.Read.All")
 TryConnect-ExchangeOnline
-
-# Initialize logger. Singleton that should have one unchanging instance.
-Set-Variable -Name "logger" -Value ([Logger]::GetInstance()) -Scope "Script" -Option "Constant"
+Set-Variable -Name "logger" -Value ([Logger]::New()) -Scope "Script" -Option "Constant"
 
 $keepGoing = $true
 do
