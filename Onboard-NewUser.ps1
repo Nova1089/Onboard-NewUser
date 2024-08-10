@@ -579,13 +579,13 @@ function Show-UserProperties($basicProps, $licenses, $groups, $adminRoles)
     Show-Separator "M365 User"
     if ($basicProps) { $basicProps | Out-Host }    
 
-    Show-Separator "Licenses"
+    Show-Separator "M365 Licenses"
     if ($licenses) { $licenses | Select-Object -ExpandProperty "Name" | Sort-Object | Out-Host }    
 
-    Show-Separator "Groups"
+    Show-Separator "M365 Groups"
     if ($groups) { $groups | Select-Object -ExpandProperty "DisplayName" | Sort-Object | Out-Host }
     
-    Show-Separator "Admin Roles"
+    Show-Separator "M365 Admin Roles"
     if ($adminRoles) { $adminRoles | Select-Object -ExpandProperty "DisplayName" | Sort-Object | Out-Host }
 }
 
@@ -664,7 +664,7 @@ function Start-M365LicenseWizard($user)
         {
             1 # View assigned licenses
             {
-                Show-Separator "Licenses"
+                Show-Separator "M365 Licenses"
                 # Capture this in a var first because Get-UserLicenses does not work in the pipeline. (It doesn't enumerate its output!)
                 $licenses = Get-UserLicenses $user
                 if ($null -eq $licenses) { break }
@@ -907,7 +907,7 @@ function Start-M365GroupWizard($user)
         {
             1 # View assigned groups
             {
-                Show-Separator "Groups"
+                Show-Separator "M365 Groups"
                 $assignedGroups = Get-UserGroups -User $user
                 if ($null -eq $assignedGroups) { break }
                 $assignedGroups | Select-Object -ExpandProperty "DisplayName" | Sort-Object | Out-Host
@@ -1237,24 +1237,24 @@ function Grant-MailboxAccess($user, $mailbox)
         {
             1 # Read and Manage
             {
-                Add-MailboxPermission -Identity $mailbox.UserPrincipalName -User $user.UserPrincipalName -AccessRights "FullAccess" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop" | Out-Null
+                Add-MailboxPermission -Identity $mailbox.PrimarySmtpAddress -User $user.UserPrincipalName -AccessRights "FullAccess" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop" | Out-Null
                 Write-Host "Granted read and manage access to mailbox! (If they didn't already have it.)" -ForegroundColor $successColor
-                $script:logger.LogChange("Granted read and manage access to mailbox: $($mailbox.UserPrincipalName)")
+                $script:logger.LogChange("Granted read and manage access to mailbox: $($mailbox.PrimarySmtpAddress)")
                 break
             }
             2 # Send As
             {
-                Add-RecipientPermission -Identity $mailbox.UserPrincipalName -Trustee $user.UserPrincipalName -AccessRights "SendAs" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop" | Out-Null
+                Add-RecipientPermission -Identity $mailbox.PrimarySmtpAddress -Trustee $user.UserPrincipalName -AccessRights "SendAs" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop" | Out-Null
                 Write-Host "Granted send as access to mailbox! (If they didn't already have it.)" -ForegroundColor $successColor
-                $script:logger.LogChange("Granted send as access to mailbox: $($mailbox.UserPrincipalName)")
+                $script:logger.LogChange("Granted send as access to mailbox: $($mailbox.PrimarySmtpAddress)")
                 break
             }
             3 # Both
             {
-                Add-MailboxPermission -Identity $mailbox.UserPrincipalName -User $user.UserPrincipalName -AccessRights "FullAccess" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop" | Out-Null
-                Add-RecipientPermission -Identity $mailbox.UserPrincipalName -Trustee $user.UserPrincipalName -AccessRights "SendAs" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop" | Out-Null
+                Add-MailboxPermission -Identity $mailbox.PrimarySmtpAddress -User $user.UserPrincipalName -AccessRights "FullAccess" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop" | Out-Null
+                Add-RecipientPermission -Identity $mailbox.PrimarySmtpAddress -Trustee $user.UserPrincipalName -AccessRights "SendAs" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop" | Out-Null
                 Write-Host "Granted read and manage + send as access to mailbox! (If they didn't already have it.)" -ForegroundColor $successColor
-                $script:logger.LogChange("Granted read and manage + send as access to mailbox: $($mailbox.UserPrincipalName)")
+                $script:logger.LogChange("Granted read and manage + send as access to mailbox: $($mailbox.PrimarySmtpAddress)")
                 break
             }
             4 # Go back
@@ -1269,7 +1269,7 @@ function Grant-MailboxAccess($user, $mailbox)
         $errorRecord = $_
         Write-Host "There was an issue granting mailbox access." -ForegroundColor $warningColor
         Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
-        $script:logger.LogWarning("There was an issue granting access to mailbox: $($mailbox.UserPrincipalName)")
+        $script:logger.LogWarning("There was an issue granting access to mailbox: $($mailbox.PrimarySmtpAddress)")
         $success = $false
     }
     return $success
@@ -1307,24 +1307,24 @@ function Revoke-MailboxAccess($user, $mailbox)
         {
             1 # Read and Manage
             {
-                Remove-MailboxPermission -Identity $mailbox.UserPrincipalName -User $user.UserPrincipalName -AccessRights "FullAccess" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop"
+                Remove-MailboxPermission -Identity $mailbox.PrimarySmtpAddress -User $user.UserPrincipalName -AccessRights "FullAccess" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop"
                 Write-Host "Revoked read and manage access to mailbox! (Assuming they had it.)" -ForegroundColor $successColor
-                $script:logger.LogChange("Revoked read and manage access to mailbox: $($mailbox.UserPrincipalName)")
+                $script:logger.LogChange("Revoked read and manage access to mailbox: $($mailbox.PrimarySmtpAddress)")
                 break
             }
             2 # Send As
             {
-                Remove-RecipientPermission -Identity $mailbox.UserPrincipalName -Trustee $user.UserPrincipalName -AccessRights "SendAs" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop"
+                Remove-RecipientPermission -Identity $mailbox.PrimarySmtpAddress -Trustee $user.UserPrincipalName -AccessRights "SendAs" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop"
                 Write-Host "Revoked send as access to mailbox! (Assuming they had it.)" -ForegroundColor $successColor
-                $script:logger.LogChange("Revoked send as access to mailbox: $($mailbox.UserPrincipalName)")
+                $script:logger.LogChange("Revoked send as access to mailbox: $($mailbox.PrimarySmtpAddress)")
                 break
             }
             3 # Both
             {
-                Remove-MailboxPermission -Identity $mailbox.UserPrincipalName -User $user.UserPrincipalName -AccessRights "FullAccess" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop"
-                Remove-RecipientPermission -Identity $mailbox.UserPrincipalName -Trustee $user.UserPrincipalName -AccessRights "SendAs" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop"
+                Remove-MailboxPermission -Identity $mailbox.PrimarySmtpAddress -User $user.UserPrincipalName -AccessRights "FullAccess" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop"
+                Remove-RecipientPermission -Identity $mailbox.PrimarySmtpAddress -Trustee $user.UserPrincipalName -AccessRights "SendAs" -Confirm:$false -WarningAction "SilentlyContinue" -ErrorAction "Stop"
                 Write-Host "Revoked read and manage + send as access to mailbox! (Assuming they had it.)" -ForegroundColor $successColor
-                $script:logger.LogChange("Revoked read and manage + send as access to mailbox: $($mailbox.UserPrincipalName)")
+                $script:logger.LogChange("Revoked read and manage + send as access to mailbox: $($mailbox.PrimarySmtpAddress)")
                 break
             }
             4 # Go back
@@ -1338,7 +1338,7 @@ function Revoke-MailboxAccess($user, $mailbox)
         $errorRecord = $_
         Write-Host "There was an issue revoking mailbox access." -ForegroundColor $warningColor
         Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
-        $script:logger.LogWarning("There was an issue revoking access to mailbox: $($mailbox.UserPrincipalName)")
+        $script:logger.LogWarning("There was an issue revoking access to mailbox: $($mailbox.PrimarySmtpAddress)")
     }
 }
 
@@ -1362,9 +1362,20 @@ function SafelyInvoke-RestMethod($method, $uri, $headers, $body)
     return $success
 }
 
-function UriEncode-QueryParam($queryParam)
-{ 
-    return [uri]::EscapeDataString($queryParam)
+function Append-QueryParams($uri, [Hashtable]$queryParams)
+{
+    # If URI doesn't end in ? mark, then append ? mark.
+    if ($uri[-1] -ne '?') { $uri = $uri + '?' }
+
+    foreach ($pair in $queryParams.GetEnumerator())
+    {
+        $uri = $uri + [uri]::EscapeDataString($pair.Key) + '=' + [uri]::EscapeDataString($pair.Value) + '&'
+    }
+
+    # If URI ends in & sign, remove ending & sign.
+    if ($uri[-1] -eq '&') { $uri = $uri.TrimEnd('&') }
+
+    return $uri    
 }
 
 function ConvertTo-Base64($text)
@@ -1466,7 +1477,7 @@ class GotoWizard
     # constructors
     GotoWizard($upn)
     {
-        Write-Host "Connecting to GoTo..." -ForegroundColor $script:infoColor
+        Write-Host "`nConnecting to GoTo..." -ForegroundColor $script:infoColor
         $this.upn = $upn
         $this.gotoSecret = $this.GetApiSecret()
         if ($null -eq $this.gotoSecret) { return }
@@ -1525,7 +1536,7 @@ class GotoWizard
         {
             $selection = $this.PromptMenu()
 
-            :outerSwitch switch ($selection)
+            switch ($selection)
             {
                 1 # Show user info
                 {
@@ -1606,7 +1617,6 @@ class GotoWizard
             return $null
         }
         
-        $method = "Post"
         $uri = "https://authentication.logmeininc.com/oauth/token"
         $headers = @{
             "Authorization" = "Basic $(ConvertTo-Base64 "$($this.clientId):$($this.clientSecret)")"
@@ -1618,7 +1628,7 @@ class GotoWizard
 
         try
         {
-            $response = Invoke-RestMethod -Method $method -Uri $uri -Headers $headers -Body $body
+            $response = Invoke-RestMethod -Method "Post" -Uri $uri -Headers $headers -Body $body
         }
         catch
         {
@@ -1647,6 +1657,7 @@ class GotoWizard
         $redirectUri = "https://localhost"
     
         $authCode = Invoke-OAuth2AuthorizationEndpoint -Uri $authUri -Client_id $this.clientId -Redirect_uri $redirectUri
+        # Splatting with @authCode: https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_splatting
         $token = Invoke-OAuth2TokenEndpoint @authCode -Uri $accessTokenUri -Client_secret $this.clientSecret -Client_auth_method "client_secret_basic"
         if ($token.refresh_token) 
         { 
@@ -1657,7 +1668,6 @@ class GotoWizard
 
     [object] CreateUser($upn, $firstName, $lastName)
     {       
-        $method = "Post"
         $uri = "https://api.getgo.com/admin/rest/v1/accounts/$($this.accountKey)/users"
         $headers = @{
             "Authorization" = "Bearer $($this.accessToken)"
@@ -1672,7 +1682,7 @@ class GotoWizard
             "licenseKeys" = @( 7902142105473202120 ) # License key for GoTo Connect Voice.
         } | ConvertTo-Json
 
-        $response = SafelyInvoke-RestMethod -Method $method -Uri $uri -Headers $headers -Body $body
+        $response = SafelyInvoke-RestMethod -Method "Post" -Uri $uri -Headers $headers -Body $body
         if ($response)
         {
             Write-Host "GoTo user created!" -ForegroundColor $script:successColor
@@ -1710,21 +1720,21 @@ class GotoWizard
 
     [object[]] GetUser()
     {
-        $method = "Get"
         # Docs: https://developer.goto.com/admin/#operation/Get%20Users
         $uri = "https://api.getgo.com/admin/rest/v1/accounts/$($this.accountKey)/users"
         $headers = @{
             "Authorization" = "Bearer $($this.accessToken)"
         }
-        # eq is the "equals" operator. https://developer.goto.com/admin/#section/Resource-Filtering 
-        $emailQuery = "email eq `"$($this.upn)`""
-
+        $queryParams = @{
+            # eq is the "equals" operator. https://developer.goto.com/admin/#section/Resource-Filtering 
+            "filter" = "email eq `"$($this.upn)`""
+        }
+        
         # Here we apply the query params directly to the URI instead of passing them to the body param of Invoke-RestMethod.
-        # That way would apply URI encoding to the query params, but encode spaces with + signs instead of %20. The GoTo API doesn't accept this.
-        $emailQuery = UriEncode-QueryParam $emailQuery
-        $uri = $uri + "?filter=$emailQuery"
+        # The body param would apply URI encoding to the query params, but encode spaces with + signs instead of %20. The GoTo API doesn't accept this.
+        $uri = Append-QueryParams -Uri $uri -QueryParams $queryParams
 
-        $response = SafelyInvoke-RestMethod -Method $method -Uri $uri -Headers $headers
+        $response = SafelyInvoke-RestMethod -Method "Get" -Uri $uri -Headers $headers
         if ($response.results) { return $response.results[0] }
         return $null
     }
@@ -1732,9 +1742,15 @@ class GotoWizard
     [void] ShowUserInfo()
     {
         $this.gotoUser = Invoke-GetWithRetry { $this.GetUser() }
-        $role = $this.GetUserRole()        
-        # I'd also show their external caller ID, but this is not accessible from the public API.
-        $this.gotoUser | Add-Member -NotePropertyName "role" -NotePropertyValue $role -PassThru | Format-List -Property @("email", "firstName", "lastName", "role") | Out-Host
+        $role = $this.GetUserRole()
+        Show-Separator "GoTo User"
+        # I'd also show their outbound caller ID, but this is not currently accessible from the public API.
+        [PSCustomObject]@{
+            "First Name" = $this.gotoUser.firstName
+            "Last Name" = $this.gotoUser.lastName
+            "Email" = $this.gotoUser.email
+            "Role" = $role
+        } | Format-List | Out-Host
     }
 
     [string] GetUserRole()
@@ -1769,13 +1785,12 @@ class GotoWizard
     {
         # Gets custom roles (not system roles)
 
-        $method = "Get"
         $uri = "https://api.getgo.com/admin/rest/v1/accounts/$($this.accountKey)/rolesets"
         $headers = @{
             "Authorization" = "Bearer $($this.accessToken)"
         }
 
-        $response = SafelyInvoke-RestMethod -Method $method -Uri $uri -Headers $headers
+        $response = SafelyInvoke-RestMethod -Method "Get" -Uri $uri -Headers $headers
         $roles = [ordered]@{} # ordered dictionary
         foreach ($role in $response.results)
         {
@@ -1861,9 +1876,10 @@ class GotoWizard
                 {
                     $method = "Delete"
                     $uri = "https://api.getgo.com/admin/rest/v1/accounts/$($this.accountKey)/users/rolesets"
-                    $emailQuery = "email eq `"$($this.gotoUser.email)`""
-                    $emailQuery = UriEncode-QueryParam $emailQuery
-                    $uri = $uri + "?filter=$emailQuery"
+                    $queryParams = @{
+                        "filter" = "email eq `"$($this.gotoUser.email)`""
+                    }
+                    $uri = Append-QueryParams -Uri $uri -QueryParams $queryParams
                 }
                 else
                 {
@@ -1877,9 +1893,10 @@ class GotoWizard
             {
                 $roleId = @($this.allCustomRoles.keys)[$roleSelection - 4] # enumerates the keys and accesses them by index
                 $uri = "https://api.getgo.com/admin/rest/v1/accounts/$($this.accountKey)/rolesets/$roleId/users"
-                $emailQuery = "email eq `"$($this.gotoUser.email)`""
-                $emailQuery = UriEncode-QueryParam $emailQuery
-                $uri = $uri + "?filter=$emailQuery"
+                $queryParams = @{
+                    "filter" = "email eq `"$($this.gotoUser.email)`""
+                }
+                $uri = Append-QueryParams -Uri $uri -QueryParams $queryParams
                 $newRoleName = $this.allCustomRoles[$roleId]
                 break
             }
@@ -1921,13 +1938,12 @@ class GotoWizard
 
     [object] GetLine()
     {
-        $method = "Get"
         $uri = "https://api.goto.com/users/v1/users/$($this.gotoUser.key)/lines"
         $headers = @{
             "Authorization" = "Bearer $($this.accessToken)"
         }
 
-        $response = SafelyInvoke-RestMethod -Method $method -Uri $uri -Headers $headers
+        $response = SafelyInvoke-RestMethod -Method "Get" -Uri $uri -Headers $headers
         return $response.items
     }
 }
@@ -2030,6 +2046,7 @@ while ($keepGoing)
 
 $userProps = Get-UserProperties $user
 Show-UserProperties -BasicProps $userProps.basicProps -Licenses $userProps.Licenses -Groups $userProps.Groups -AdminRoles $userProps.AdminRoles
+if ($gotoWizard) { $gotoWizard.ShowUserInfo() }
 $script:logger.ShowLogs()
 
-Read-Host "Press Enter to exit"
+Read-Host "`nPress Enter to exit"
