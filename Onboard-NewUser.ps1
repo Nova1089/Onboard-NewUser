@@ -1034,6 +1034,7 @@ function Assign-M365Group($user, $group)
     try
     {
         New-MgGroupMember -GroupId $group.Id -DirectoryObjectId $user.Id -ErrorAction "Stop" | Out-Null
+        # Not every group has an email (such as security groups), so we'll show/log the DisplayName instead.
         Write-Host "Group assigned: $($group.DisplayName)" -ForegroundColor $successColor
         $script:logger.LogChange("Assigned M365 group: $($group.DisplayName)")
         $success = $true
@@ -1043,6 +1044,7 @@ function Assign-M365Group($user, $group)
         $errorRecord = $_
         Write-Host "There was an issue assigning the group." -ForegroundColor $warningColor
         Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
+        # Not every group has an email (such as security groups), so we'll show/log the DisplayName instead.
         $script:logger.LogWarning("There was an issue assigning M365 group: $($group.DisplayName)")
         $success = $false
     }
@@ -1094,6 +1096,7 @@ function Unassign-M365Group($user, $group)
     try
     {
         Remove-MgGroupMemberByRef -GroupId $group.Id -DirectoryObjectId $user.Id -ErrorAction "Stop" | Out-Null
+        # Not every group has an email (such as security groups), so we'll show/log the DisplayName instead.
         Write-Host "Group unassigned: $($group.DisplayName)" -ForegroundColor $successColor
         $script:logger.LogChange("Unassigned M365 group: $($group.DisplayName)")
     }
@@ -1102,6 +1105,7 @@ function Unassign-M365Group($user, $group)
         $errorRecord = $_
         Write-Host "There was an issue unassigning the group." -ForegroundColor $warningColor
         Write-Host $errorRecord.Exception.Message -ForegroundColor $warningColor
+        # Not every group has an email (such as security groups), so we'll show/log the DisplayName instead.
         $script:logger.LogWarning("There was an issue unassigning M365 group: $($group.DisplayName)")
     }
 }
