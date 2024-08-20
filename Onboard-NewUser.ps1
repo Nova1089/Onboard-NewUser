@@ -1921,14 +1921,14 @@ class GotoWizard
 
     [void] DisplayLinkToOutboundCallerId()
     {
-        $url = "https://my.jive.com/pbx/brs/extensions/lines/$(($this.GetLine()).id)/general?source=root.nav.pbx.extensions.lines.list"
+        $url = "https://admin.goto.com/$($this.accountKey)/phone-system/direct-extensions/details/$($this.GetLine().id)/settings"
         Write-Host "At this time the GoTo API can't change the outbound caller ID. You'll need to change it here:`n$url" -ForegroundColor $script:infoColor
         $shouldLaunch = Prompt-YesOrNo "Launch browser to this link?"
         if ($shouldLaunch)
         {
             try 
             {                
-                Start-Process $url # When passed a URL Start-Process will launch system default browser.
+                Start-Process $url # When passed a URL, Start-Process will launch the system default browser.
             }
             catch
             {
